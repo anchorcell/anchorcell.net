@@ -5,7 +5,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
 
-    <title>{% if page.title %}{{ page.title }} / {% endif %}{{ site.title }}</title>
+    <title>
+        {% if page.url == '/' %}
+            {{ site.title }}
+        {% elsif page.title %}
+            {{ page.title }} / {{ site.title }}
+        {% else %}
+            {{ site.title }}
+        {% endif %}
+    </title>
 
     <link href="https://cdn.jsdelivr.net/gh/vsalvino/computer-modern@main/fonts/serif.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}">

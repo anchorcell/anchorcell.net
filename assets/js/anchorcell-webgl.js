@@ -1,7 +1,56 @@
+
 (() => {
-    const canvas = document.getElementById('gl'), gl = canvas.getContext('webgl', { antialias: true, alpha: false });
-    if (!gl) { document.documentElement.classList.add('no-webgl'); return }
+    if (window.__ANCHORCELL_WEBGL_STARTED__) return;
+    window.__ANCHORCELL_WEBGL_STARTED__ = true;
+
+    const canvas = document.getElementById('gl');
+
+    if (!canvas) {
+        document.documentElement.classList.add('no-webgl');
+        window.__ANCHORCELL_WEBGL_STARTED__ = false;
+        return;
+    }
+
+    function createGLContext(canvas) {
+        const contextNames = ['webgl', 'experimental-webgl'];
+
+        const optionSets = [
+            { antialias: true, alpha: false },
+            { antialias: false, alpha: false },
+            { antialias: true, alpha: true },
+            { antialias: false, alpha: true },
+            {}
+        ];
+
+        for (const name of contextNames) {
+            for (const opts of optionSets) {
+                try {
+                    const ctx = canvas.getContext(name, opts);
+
+                    if (ctx) {
+                        return ctx;
+                    }
+                } catch (err) {
+                    // Try the next option set.
+                }
+            }
+        }
+
+        return null;
+    }
+
+    const gl = createGLContext(canvas);
+
+    if (!gl) {
+        document.documentElement.classList.remove('webgl-ready');
+        document.documentElement.classList.add('no-webgl');
+        window.__ANCHORCELL_WEBGL_STARTED__ = false;
+        return;
+    }
+
+    document.documentElement.classList.remove('no-webgl');
     document.documentElement.classList.add('webgl-ready');
+
     const TAU = Math.PI * 2, MSD = 86400000, YR = 365.2422, LM = 29.530588853, C = { w: [1, 1, 1, 1], s: [.918, .878, .639, 1], m: [.651, .761, .937, 1], b: [0, 0, 0, 1] };
     const P = {
         starR: 1.5,
@@ -39,6 +88,40 @@
         CURRENT_PAGE = window.ANCHORCELL_PAGE || {},
         ROUTES = { news: '/news/', shows: '/shows/', music: '/music/', videos: '/videos/' },
         PAGE = { mode: 'home', section: null, page: null, t0: 0, duration: 950 };
+
+    function isNewsPath(pathname) {
+        return pathname === '/news/' || /^\/news\/page\d+\/?$/.test(pathname);
+    }
+    async function fetchRenderedPage(url) {
+        const res = await fetch(url);
+
+        if (!res.ok) {
+            throw new Error('Could not load ' + url);
+        }
+
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const root = doc.querySelector('.staticFallbackPage') || doc;
+        const title = root.querySelector('.pageTitle');
+        const kicker = root.querySelector('#pageKicker, .pageKicker');
+        const body = root.querySelector('.pageBody');
+        const back = root.querySelector('.pageBack');
+
+        if (!body) {
+            throw new Error('No page body found in ' + url);
+        }
+
+        return {
+            type: 'fetched',
+            key: url,
+            title: title ? title.textContent.trim() : 'news',
+            kicker: kicker ? kicker.textContent.trim() : 'anchorcell / news',
+            backUrl: back ? back.getAttribute('href') || '/' : '/',
+            backLabel: back ? back.textContent.trim() || 'Back' : 'Back',
+            body: body.innerHTML
+        };
+    }
 
     function cleanPath(path) {
         return (path || '/')
@@ -92,6 +175,24 @@
         return null;
     }
 
+    const SITE_TITLE = 'anchorcell';
+
+    function setDocumentTitle(data) {
+        const title = data && data.title
+            ? String(data.title).trim()
+            : '';
+
+        if (!title || title.toLowerCase() === SITE_TITLE.toLowerCase()) {
+            document.title = SITE_TITLE;
+        } else {
+            document.title = title + ' / ' + SITE_TITLE;
+        }
+    }
+
+    function setHomeDocumentTitle() {
+        document.title = SITE_TITLE;
+    }
+
     function setPage(dataOrKey) {
         let data = typeof dataOrKey === 'string'
             ? sectionPageData(dataOrKey)
@@ -101,6 +202,8 @@
 
         PAGE.page = data;
         PAGE.section = data.type === 'section' ? data.key : null;
+
+        setDocumentTitle(data);
 
         pageTitle.textContent = (data.title || '').toLowerCase();
         pageKicker.textContent = data.kicker || 'anchorcell';
@@ -113,11 +216,24 @@
             : (c || '<p>More soon.</p>');
     }
 
-    function startPage(s, opts = {}) {
+    async function startPage(s, opts = {}) {
         if (PAGE.mode !== 'home' && !opts.force) return;
-        if (!COPY[s]) return;
 
-        let data = sectionPageData(s);
+        let data;
+
+        if (s === 'news') {
+            try {
+                data = await fetchRenderedPage(ROUTES.news);
+            } catch (err) {
+                if (!opts.noHistory) {
+                    location.href = ROUTES.news;
+                }
+                return;
+            }
+        } else {
+            if (!COPY[s]) return;
+            data = sectionPageData(s);
+        }
 
         if (!opts.noHistory) {
             history.pushState({ section: s }, '', ROUTES[s] || ('/' + s + '/'));
@@ -148,6 +264,8 @@
         if (!opts.noHistory) {
             history.pushState({ section: 'home' }, '', '/');
         }
+
+        setHomeDocumentTitle();
 
         PAGE.mode = 'out';
         PAGE.t0 = performance.now();
@@ -246,7 +364,50 @@
     function progress(now) { return Math.max(0, Math.min(1, (now - PAGE.t0) / PAGE.duration)) }
     function setLabel(el, p) { el.style.left = p.x + 'px'; el.style.top = p.y + 'px' }
     function updateLabels() { let d = { sun: bodyLabelScreen('sun'), moon: bodyLabelScreen('moon'), earth: earthLabelScreen(), stars: starsLabelScreen(), N: projectW(c2w(v(0, 0, 5.65))), S: projectW(c2w(v(0, 0, -5.65))) }; for (let k in d) setLabel(labels[k], d[k]); for (let k in labels) labels[k].classList.toggle('hidden', PAGE.mode !== 'home') }
-    function readouts() { let sd = sdec(), md = mdec(), ma = ((mang() / TAU) % 1 + 1) % 1, phase = ma < .03 || ma > .97 ? 'new' : ma < .47 ? 'waxing' : ma < .53 ? 'full' : 'waning'; $('datev').textContent = new Date(S.ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); $('speedv').textContent = S.speed.toFixed(0) + '×'; $('sunReadout').textContent = 'sun declination ' + sd.toFixed(1) + '°'; $('moonReadout').textContent = 'moon declination ' + md.toFixed(1) + '° / ' + phase } function frame() { let now = performance.now(), dt = (now - S.last) / 1000; S.last = now; if (!S.interactive) { let k = 1 - Math.exp(-dt * 5.5); S.yaw += (S.targetYaw - S.yaw) * k; S.pitch += (S.targetPitch - S.pitch) * k } if (S.play) { S.ms += dt * 1000 * S.speed; if (now - S.readoutLast > 500) dateTime.value = toInput(S.ms) } if (now - S.readoutLast > 500) { readouts(); S.readoutLast = now } if (PAGE.mode === 'home') { drawScene(1, S.topEarth, 1, false); updateLabels() } else if (PAGE.mode === 'in') { let p = progress(now), e = ease(p), filled = p > .56; drawScene(1 + e * 170, true, 1 + e * 8, filled); updateLabels(); if (p > .58) { pageOverlay.classList.add('show') } if (p >= .82) { PAGE.mode = 'page'; pageOverlay.classList.add('show') } } else if (PAGE.mode === 'page') drawScene(1, true, 8, true); else if (PAGE.mode === 'out') { let p = progress(now), e = ease(1 - p); drawScene(1 + e * 170, true, 1 + e * 8, p < .16); if (p >= 1) { S.topEarth = false; PAGE.mode = 'home'; siteOverlay.classList.remove('faded'); modeToggle.style.opacity = 1; pageOverlay.classList.remove('show') } } requestAnimationFrame(frame) }
+    function readouts() { let sd = sdec(), md = mdec(), ma = ((mang() / TAU) % 1 + 1) % 1, phase = ma < .03 || ma > .97 ? 'new' : ma < .47 ? 'waxing' : ma < .53 ? 'full' : 'waning'; $('datev').textContent = new Date(S.ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); $('speedv').textContent = S.speed.toFixed(0) + '×'; $('sunReadout').textContent = 'sun declination ' + sd.toFixed(1) + '°'; $('moonReadout').textContent = 'moon declination ' + md.toFixed(1) + '° / ' + phase }
+    function frame() {
+        let now = performance.now(), dt = (now - S.last) / 1000;
+        S.last = now;
+        if (!S.interactive) {
+            let k = 1 - Math.exp(-dt * 5.5);
+            S.yaw += (S.targetYaw - S.yaw) * k;
+            S.pitch += (S.targetPitch - S.pitch) * k
+        }
+        if (S.play) {
+            S.ms += dt * 1000 * S.speed;
+            if (now - S.readoutLast > 500) dateTime.value = toInput(S.ms)
+        }
+        if (now - S.readoutLast > 500) {
+            readouts(); S.readoutLast = now
+        }
+        if (PAGE.mode === 'home') {
+            drawScene(1, S.topEarth, 1, false);
+            updateLabels();
+        } else if (PAGE.mode === 'in') {
+            let p = progress(now), e = ease(p), filled = p > .56;
+            drawScene(1 + e * 170, true, 1 + e * 8, filled);
+            updateLabels();
+            if (p > .58) {
+                pageOverlay.classList.add('show');
+            }
+            if (p >= .82) {
+                PAGE.mode = 'page';
+                pageOverlay.classList.add('show');
+            }
+        } else if (PAGE.mode === 'page') drawScene(1, true, 8, true);
+        else if (PAGE.mode === 'out') {
+            let p = progress(now), e = ease(1 - p);
+            drawScene(1 + e * 170, true, 1 + e * 8, p < .16);
+            if (p >= 1) {
+                S.topEarth = false;
+                PAGE.mode = 'home';
+                siteOverlay.classList.remove('faded');
+                modeToggle.style.opacity = 1;
+                pageOverlay.classList.remove('show')
+            }
+        }
+        requestAnimationFrame(frame)
+    }
 
     let initialData = currentPageData();
 
