@@ -1,0 +1,399 @@
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    background: #000;
+    color: #fff;
+    font: 12px ui-monospace, monospace;
+}
+
+canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    touch-action: none;
+}
+
+/* Shared title styling, used by WebGL overlay and static fallback */
+.bandTitle,
+.siteOverlay .bandTitle {
+    display: inline-block;
+    font-family: "Computer Modern Serif", serif;
+    font-size: clamp(30px, 5.4vw, 84px);
+    line-height: .9;
+    color: #fff;
+    text-decoration: none;
+}
+
+/* WebGL homepage overlay */
+.siteOverlay {
+    position: fixed;
+    left: clamp(18px, 5vw, 72px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    font-family: "Computer Modern Serif", serif;
+    transition: opacity .55s ease;
+}
+
+.siteOverlay.faded,
+.siteOverlay.interactiveHidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.siteOverlay nav {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.siteOverlay nav a {
+    color: #fff;
+    text-decoration: none;
+    font-size: clamp(16px, 1.55vw, 24px);
+    line-height: 1.05;
+    opacity: .86;
+    text-shadow: 0 0 16px #000;
+    text-transform: lowercase;
+}
+
+.siteOverlay nav a:hover,
+.siteOverlay nav a:focus-visible {
+    opacity: 1;
+}
+
+/* WebGL labels */
+.label {
+    position: fixed;
+    z-index: 9;
+    color: #fff;
+    font: 18px "Computer Modern Serif", serif;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    text-shadow: 0 0 10px #000;
+}
+
+.label.hidden {
+    display: none;
+}
+
+/* WebGL controls */
+.modeToggle {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 30;
+    margin: 0;
+    background: rgba(0, 0, 0, .72);
+    font: inherit;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 999px;
+    padding: 6px 10px;
+}
+
+.ui {
+    position: fixed;
+    left: 18px;
+    bottom: 18px;
+    width: min(650px, calc(100vw - 36px));
+    background: rgba(0, 0, 0, .72);
+    border: 1px solid #444;
+    border-radius: 14px;
+    padding: 14px;
+    box-sizing: border-box;
+    z-index: 20;
+    display: none;
+}
+
+.ui.show {
+    display: block;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: 128px 1fr 86px;
+    gap: 10px;
+    align-items: center;
+    margin: 8px 0;
+}
+
+.value {
+    text-align: right;
+    opacity: .75;
+}
+
+input {
+    width: 100%;
+    accent-color: #fff;
+    background: #111;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 4px;
+    box-sizing: border-box;
+}
+
+/* Shared page overlay styling: WebGL subpages and static subpages */
+.pageOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: #fff;
+    color: #000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .55s ease;
+    font-family: "Computer Modern Serif", serif;
+}
+
+.pageOverlay.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.pageInner {
+    position: absolute;
+    left: clamp(22px, 7vw, 110px);
+    top: clamp(26px, 10vh, 110px);
+    width: min(760px, calc(100vw - 44px));
+}
+
+.pageTitle {
+    font-size: clamp(42px, 8vw, 118px);
+    font-weight: 400;
+    line-height: .86;
+    margin: 0 0 28px;
+    text-transform: lowercase;
+}
+
+#pageKicker {
+    font: 12px ui-monospace, monospace;
+    letter-spacing: .05em;
+    text-transform: lowercase;
+    margin-bottom: 14px;
+    opacity: .7;
+}
+
+.pageBody {
+    font: clamp(16px, 1.45vw, 22px)/1.45 "Computer Modern Serif", serif;
+}
+
+.pageBody p,
+.pageBody li {
+    font: inherit;
+}
+
+/* WebGL app visibility */
+.webglApp {
+    display: none;
+}
+
+.webgl-ready body {
+    height: 100%;
+    overflow: hidden;
+}
+
+.webgl-ready .webglApp {
+    display: block;
+}
+
+/* Static fallback visibility */
+.staticFallback {
+    display: block;
+}
+
+.webgl-ready .staticFallback {
+    display: none;
+}
+
+.no-js .webglApp,
+.no-webgl .webglApp {
+    display: none;
+}
+
+.no-js body,
+.no-webgl body {
+    min-height: 100vh;
+}
+
+/* Static homepage mirrors the WebGL homepage */
+.staticFallbackHome {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    min-height: 100vh;
+    overflow: hidden;
+    background: #000;
+    color: #fff;
+}
+
+.staticFallbackHome .fallbackGraphic {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    opacity: .95;
+    pointer-events: none;
+}
+
+.staticFallbackHome .fallbackGraphic svg {
+    width: min(78vw, 900px);
+    height: auto;
+    display: block;
+    overflow: visible;
+}
+
+.staticSiteOverlay {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.staticHomeExtra {
+    position: fixed;
+    left: clamp(18px, 5vw, 72px);
+    bottom: clamp(18px, 5vh, 72px);
+    z-index: 11;
+    max-width: 540px;
+    font: clamp(16px, 1.45vw, 22px)/1.45 "Computer Modern Serif", serif;
+    color: #fff;
+    text-shadow: 0 0 16px #000;
+}
+
+.staticHomeExtra:empty {
+    display: none;
+}
+
+/* Static subpages mirror the WebGL white page overlay */
+.staticFallbackPage {
+    min-height: 100vh;
+    background: #fff;
+    color: #000;
+}
+
+.staticPageOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    opacity: 1;
+    pointer-events: auto;
+    background: #fff;
+    color: #000;
+    font-family: "Computer Modern Serif", serif;
+    transition: none;
+}
+
+.pageBack {
+    display: inline-block;
+    font: 14px ui-monospace, monospace;
+    color: #000;
+    background: transparent;
+    border: 1px solid #000;
+    border-radius: 999px;
+    padding: 7px 12px;
+    margin: 0 0 42px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.pageBack:hover,
+.pageBack:focus-visible {
+    background: #000;
+    color: #fff;
+    opacity: 1;
+}
+
+.pageOverlay a:not(.pageBack),
+.staticPageOverlay a:not(.pageBack) {
+    color: #000;
+    text-decoration: underline;
+    text-underline-offset: .16em;
+}
+
+.pageOverlay a:not(.pageBack):hover,
+.pageOverlay a:not(.pageBack):focus-visible,
+.staticPageOverlay a:not(.pageBack):hover,
+.staticPageOverlay a:not(.pageBack):focus-visible {
+    color: #000;
+    opacity: .72;
+}
+
+.postList,
+.showsList,
+.releaseList,
+.videoList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 1.35rem;
+}
+
+.postList h2,
+.showsList h2,
+.releaseList h2,
+.videoList h2 {
+    font-family: "Computer Modern Serif", serif;
+    font-size: clamp(24px, 3vw, 42px);
+    font-weight: 400;
+    line-height: 1;
+    margin: .2rem 0 .55rem;
+}
+
+.postMeta,
+.showMeta,
+.releaseMeta,
+.videoMeta {
+    font: 14px ui-monospace, monospace;
+    opacity: .72;
+}
+
+.pageOverlay .postList li,
+.pageOverlay .showsList li,
+.pageOverlay .releaseList li,
+.pageOverlay .videoList li {
+    border-top: 1px solid rgba(0, 0, 0, .25);
+    padding-top: 1rem;
+}
+
+
+
+.siteOverlay .bandTitle,
+.staticSiteOverlay .bandTitle,
+.siteOverlay nav a,
+.staticSiteOverlay nav a {
+    text-shadow:
+        0 1px 2px rgba(0, 0, 0, .95),
+        0 3px 8px rgba(0, 0, 0, .9),
+        0 8px 22px rgba(0, 0, 0, .85),
+        0 16px 42px rgba(0, 0, 0, .7);
+}
+
+.pageOverlay,
+.staticPageOverlay {
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+
+.pagination {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-top: 2rem;
+    font: 14px ui-monospace, monospace;
+    padding-bottom: 4rem;
+}
+
+.pagination span {
+    opacity: .72;
+}

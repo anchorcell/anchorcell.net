@@ -1,0 +1,50 @@
+# Jekyll build output
+_site/
+.sass-cache/
+.jekyll-cache/
+.jekyll-metadata
+
+# Bundler
+.bundle/
+vendor/bundle/
+vendor/cache/
+vendor/ruby/
+
+# Logs
+*.log
+gem_make.out
+mkmf.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor folders
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local server / generated artifacts
+*.pid
+*.seed
+
+# Archives / generated zips
+*.zip
+
+# Ruby native extension leftovers
+*.gem
+*.rbc

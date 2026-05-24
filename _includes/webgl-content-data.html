@@ -1,0 +1,8 @@
+<script>
+window.ANCHORCELL_CONTENT = {
+  news: `{% capture news_html %}{% include news-index.html %}{% endcapture %}{{ news_html | normalize_whitespace | replace: '`', '\`' }}`,
+  shows: `{% capture shows_html %}{% include shows-list.html %}{% endcapture %}{{ shows_html | normalize_whitespace | replace: '`', '\`' }}`,
+  music: `{% capture music_html %}{% include music-list.html %}{% endcapture %}{{ music_html | normalize_whitespace | replace: '`', '\`' }}`,
+  videos: `{% capture videos_html %}{% include videos-list.html %}{% endcapture %}{{ videos_html | normalize_whitespace | replace: '`', '\`' }}`
+};
+</script>

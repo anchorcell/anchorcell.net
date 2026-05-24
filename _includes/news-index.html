@@ -1,0 +1,41 @@
+{% assign news_posts = paginator.posts | default: site.posts %}
+{% if site.posts.size > 0 %}
+    <ul class="postList">
+        {% for post in news_posts %}
+            <li>
+                <div class="postMeta">{{ post.date | date: "%d %b %Y" }}</div>
+                <h2><a href="{{ post.url | relative_url }}">{{ post.title }}</a></h2>
+                
+
+                {% assign excerpt_text = post.excerpt | strip_html | normalize_whitespace %}
+                {% assign content_text = post.content | strip_html | normalize_whitespace %}
+
+
+                <p>
+                    {{ excerpt_text }}{% if excerpt_text != content_text %}…
+                        <a href="{{ post.url | relative_url }}">read more</a>
+                    {% endif %}
+                </p>
+            </li>
+        {% endfor %}
+    </ul>
+
+{% if paginator.total_pages > 1 %}
+    <nav class="pagination" aria-label="news pagination">
+        {% if paginator.previous_page %}
+            <a href="{{ paginator.previous_page_path | relative_url }}">newer</a>
+        {% endif %}
+
+        <span>
+            page {{ paginator.page }} of {{ paginator.total_pages }}
+        </span>
+
+        {% if paginator.next_page %}
+            <a href="{{ paginator.next_page_path | relative_url }}">older</a>
+        {% endif %}
+    </nav>
+{% endif %}
+
+{% else %}
+    <p>news soon.</p>
+{% endif %}

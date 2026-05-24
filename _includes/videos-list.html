@@ -1,0 +1,9 @@
+<ul class="videoList">
+    {% for video in site.data.videos %}
+        <li>
+            <div class="videoMeta">{{ video.year }}</div>
+            <h2><a href="{{ video.url }}">{{ video.title }}</a></h2>
+            <p>{{ video.description }}</p>
+        </li>
+    {% endfor %}
+</ul>

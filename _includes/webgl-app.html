@@ -1,0 +1,30 @@
+<div class="webglApp" aria-hidden="true"><canvas id="gl"></canvas>
+    <main class="siteOverlay"><a class="bandTitle" href="{{ '/' | relative_url }}">anchorcell</a>{% include nav.html %}
+    </main>
+    <div id="sunLabel" class="label">sun</div>
+    <div id="moonLabel" class="label">moon</div>
+    <div id="earthLabel" class="label">earth</div>
+    <div id="starsLabel" class="label">stars</div>
+    <div id="nLabel" class="label">N</div>
+    <div id="sLabel" class="label">S</div><button id="modeToggle" class="modeToggle">Interactive mode</button>
+    <div id="uiPanel" class="ui">
+        <button id="play">Pause</button>
+        <button id="reset">Reset view</button>
+        <button id="now">Now</button>
+        <div class="row"><label>date / time</label><input id="dateTime" type="datetime-local">
+            <div id="datev" class="value"></div>
+        </div>
+        <div class="row"><label>time speed</label><input id="speed" type="range" min="0" max="10000" value="1">
+            <div id="speedv" class="value"></div>
+        </div>
+        <div id="sunReadout"></div>
+        <div id="moonReadout"></div>
+    </div>
+    <section id="pageOverlay" class="pageOverlay">
+        <div class="pageInner"><button id="pageBack" class="pageBack">Back</button>
+            <div id="pageKicker">anchorcell</div>
+            <h1 id="pageTitle" class="pageTitle">news</h1>
+            <div id="pageBody" class="pageBody"></div>
+        </div>
+    </section>
+</div>

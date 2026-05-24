@@ -1,0 +1,16 @@
+<ul class="showsList">
+    {% for show in site.data.shows %}
+        <li>
+            <div class="showMeta">{{ show.date | date: "%d %b %Y" }} · {{ show.city }}</div>
+            <h2>{{ show.venue }}</h2>
+            {% if show.note %}
+                <p>{{ show.note }}</p>
+            {% endif %}
+            {% if show.url %}
+                <p>
+                    <a href="{{ show.url }}">link</a>
+                </p>
+            {% endif %}
+    </li>
+    {% endfor %}
+</ul>
