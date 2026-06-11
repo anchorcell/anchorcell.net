@@ -83,7 +83,41 @@
     let pathProg = gl.createProgram(); gl.attachShader(pathProg, sh(gl.VERTEX_SHADER, pathVS)); gl.attachShader(pathProg, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pathProg); const ploc = { prev: gl.getAttribLocation(pathProg, 'aPrev'), curr: gl.getAttribLocation(pathProg, 'aCurr'), next: gl.getAttribLocation(pathProg, 'aNext'), side: gl.getAttribLocation(pathProg, 'aSide'), col: gl.getAttribLocation(pathProg, 'aCol'), m: gl.getUniformLocation(pathProg, 'uM'), res: gl.getUniformLocation(pathProg, 'uRes'), zoom: gl.getUniformLocation(pathProg, 'uZoom'), thick: gl.getUniformLocation(pathProg, 'uThickness') }, pbuf = gl.createBuffer(), cbuf2 = gl.createBuffer(), nbuf = gl.createBuffer(), sbuf = gl.createBuffer(), pcol = gl.createBuffer();
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); try { gl.lineWidth(3) } catch (e) { }
     function v(x = 0, y = 0, z = 0) { return { x, y, z } } function add(a, b) { return v(a.x + b.x, a.y + b.y, a.z + b.z) } function sub(a, b) { return v(a.x - b.x, a.y - b.y, a.z - b.z) } function mul(a, s) { return v(a.x * s, a.y * s, a.z * s) } function norm(a) { let l = Math.hypot(a.x, a.y, a.z) || 1; return mul(a, 1 / l) } function basis() { let a = P.alpha, b = P.beta; return { axis: v(Math.sin(b) * Math.cos(a), Math.sin(b) * Math.sin(a), Math.cos(b)), lx: v(Math.cos(a) * Math.cos(b), Math.sin(a) * Math.cos(b), -Math.sin(b)), ly: v(-Math.sin(a), Math.cos(a), 0) } } function c2w(p) { let B = basis(); return add(add(mul(B.lx, p.x), mul(B.ly, p.y)), mul(B.axis, p.z)) } function rotMat() { let cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cx = Math.cos(S.pitch), sx = Math.sin(S.pitch); return new Float32Array([cy, sx * sy, -cx * sy, 0, 0, cx, sx, 0, sy, -sx * cy, cx * cy, 0, 0, 0, 0, 1]) } function w2v(p) { let cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), x = cy * p.x + sy * p.z, z = -sy * p.x + cy * p.z, y = p.y, cx = Math.cos(S.pitch), sx = Math.sin(S.pitch); return { x, y: cx * y - sx * z, z: sx * y + cx * z } } function invView(q) { let cx = Math.cos(S.pitch), sx = Math.sin(S.pitch), cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), y = cx * q.y + sx * q.z, z = -sx * q.y + cx * q.z, x = q.x; return v(cy * x - sy * z, y, sy * x + cy * z) } function projectW(p) { let q = w2v(p), dpr = canvas.width / innerWidth; return { x: innerWidth / 2 + q.x * S.zoom / dpr, y: innerHeight / 2 - q.y * S.zoom / dpr, z: q.z } }
-    function pad(n) { return String(n).padStart(2, '0') } function toInput(ms) { let d = new Date(ms); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) } function fromInput(s) { let t = new Date(s).getTime(); return Number.isFinite(t) ? t : S.ms } dateTime.value = toInput(S.ms); $('play').onclick = () => { S.play = !S.play; $('play').textContent = S.play ? 'Pause' : 'Play' }; $('reset').onclick = () => { S.yaw = S.baseYaw = S.targetYaw = START.yaw; S.pitch = S.basePitch = S.targetPitch = START.pitch; S.zoom = fitZoom() }; $('now').onclick = () => { S.ms = Date.now(); dateTime.value = toInput(S.ms) }; dateTime.oninput = () => S.ms = fromInput(dateTime.value); speed.oninput = () => S.speed = +speed.value; modeToggle.onclick = () => { S.interactive = !S.interactive; uiPanel.classList.toggle('show', S.interactive); siteOverlay.classList.toggle('interactiveHidden', S.interactive); modeToggle.textContent = S.interactive ? 'Exit interactive' : 'Interactive mode'; drag = null; S.baseYaw = S.yaw; S.basePitch = S.pitch; S.targetYaw = S.yaw; S.targetPitch = S.pitch };
+    function pad(n) { return String(n).padStart(2, '0') } function toInput(ms) { let d = new Date(ms); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) } function fromInput(s) { let t = new Date(s).getTime(); return Number.isFinite(t) ? t : S.ms }
+    dateTime.value = toInput(S.ms);
+    $('play').onclick = () => {
+        S.play = !S.play;
+        $('play').textContent = S.play ? 'pause' : 'resume'
+    };
+    $('reset').onclick = () => {
+        S.yaw = S.baseYaw = S.targetYaw = START.yaw;
+        S.pitch = S.basePitch = S.targetPitch = START.pitch;
+        S.zoom = fitZoom() * (canvas.width / innerWidth);
+    };
+    $('now').onclick = () => {
+        S.ms = Date.now();
+        dateTime.value = toInput(S.ms)
+    };
+    function commitDateTimeInput() {
+        S.ms = fromInput(dateTime.value);
+        dateTime.value = toInput(S.ms); 
+        readouts();
+    }
+    dateTime.oninput = () => {   
+        let t = new Date(dateTime.value).getTime();   
+        if (Number.isFinite(t)) S.ms = t;
+    };
+    dateTime.onchange = commitDateTimeInput;
+    dateTime.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();        
+            commitDateTimeInput();        
+            dateTime.blur();    
+        }
+    });
+    speed.oninput = () => S.speed = +speed.value;
+    
+    modeToggle.onclick = () => { S.interactive = !S.interactive; uiPanel.classList.toggle('show', S.interactive); siteOverlay.classList.toggle('interactiveHidden', S.interactive); modeToggle.textContent = S.interactive ? 'shun' : 'interact'; drag = null; S.baseYaw = S.yaw; S.basePitch = S.pitch; S.targetYaw = S.yaw; S.targetPitch = S.pitch };
     const COPY = window.ANCHORCELL_CONTENT || {},
         CURRENT_PAGE = window.ANCHORCELL_PAGE || {},
         ROUTES = { news: '/news/', shows: '/shows/', music: '/music/', videos: '/videos/' },
@@ -375,10 +409,11 @@
         }
         if (S.play) {
             S.ms += dt * 1000 * S.speed;
-            if (now - S.readoutLast > 500) dateTime.value = toInput(S.ms)
+            if (now - S.readoutLast > 500 && document.activeElement !== dateTime) dateTime.value = toInput(S.ms);
         }
         if (now - S.readoutLast > 500) {
-            readouts(); S.readoutLast = now
+            readouts();
+            S.readoutLast = now;
         }
         if (PAGE.mode === 'home') {
             drawScene(1, S.topEarth, 1, false);
@@ -394,8 +429,9 @@
                 PAGE.mode = 'page';
                 pageOverlay.classList.add('show');
             }
-        } else if (PAGE.mode === 'page') drawScene(1, true, 8, true);
-        else if (PAGE.mode === 'out') {
+        } else if (PAGE.mode === 'page') { 
+            drawScene(1, true, 8, true);
+        } else if (PAGE.mode === 'out') {
             let p = progress(now), e = ease(1 - p);
             drawScene(1 + e * 170, true, 1 + e * 8, p < .16);
             if (p >= 1) {
