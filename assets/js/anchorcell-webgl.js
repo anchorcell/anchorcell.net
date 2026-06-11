@@ -398,7 +398,50 @@
     function progress(now) { return Math.max(0, Math.min(1, (now - PAGE.t0) / PAGE.duration)) }
     function setLabel(el, p) { el.style.left = p.x + 'px'; el.style.top = p.y + 'px' }
     function updateLabels() { let d = { sun: bodyLabelScreen('sun'), moon: bodyLabelScreen('moon'), earth: earthLabelScreen(), stars: starsLabelScreen(), N: projectW(c2w(v(0, 0, 5.65))), S: projectW(c2w(v(0, 0, -5.65))) }; for (let k in d) setLabel(labels[k], d[k]); for (let k in labels) labels[k].classList.toggle('hidden', PAGE.mode !== 'home') }
-    function readouts() { let sd = sdec(), md = mdec(), ma = ((mang() / TAU) % 1 + 1) % 1, phase = ma < .03 || ma > .97 ? 'new' : ma < .47 ? 'waxing' : ma < .53 ? 'full' : 'waning'; $('datev').textContent = new Date(S.ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); $('speedv').textContent = S.speed.toFixed(0) + '×'; $('sunReadout').textContent = 'sun declination ' + sd.toFixed(1) + '°'; $('moonReadout').textContent = 'moon declination ' + md.toFixed(1) + '° / ' + phase }
+    function wrap01(x) {
+        return ((x % 1) + 1) % 1;
+    }
+
+    function heavensMood() {
+        let sunDaily = wrap01(day());
+        let moonDaily = wrap01(day() + mang() / TAU);
+        let season = wrap01(yang() / TAU);
+        let phase = wrap01(mang() / TAU);
+
+        let agreement = Math.cos(TAU * (sunDaily - moonDaily));
+        let warmth = Math.sin(TAU * season);
+        let fullness = Math.cos(TAU * (phase - .5));
+        let threshold = Math.cos(TAU * (sunDaily - .25));
+
+        let omen =
+            agreement * 1.25 +
+            warmth * 1.1 +
+            fullness * .85 +
+            threshold * .65;
+
+        let mood =
+            omen > 2.25 ? 'the heavens are radiant' :
+            omen > 1.25 ? 'the heavens are happy' :
+            omen > .35 ? 'the heavens are pleased' :
+            omen > -.35 ? 'the heavens are inscrutable' :
+            omen > -1.25 ? 'the heavens are wistful' :
+            omen > -2.25 ? 'the heavens are sad' :
+            'the heavens are inconsolable';
+
+        return mood;
+    }
+
+    function readouts() {
+        let h = heavensMood();
+
+        $('datev').textContent = new Date(S.ms).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric'
+        });
+
+        $('speedv').textContent = S.speed.toFixed(0) + '×';
+        $('heavensReadout').textContent = h;
+    }
     function frame() {
         let now = performance.now(), dt = (now - S.last) / 1000;
         S.last = now;
