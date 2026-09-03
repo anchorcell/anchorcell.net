@@ -385,7 +385,7 @@
     pageOverlay.inert = !visible;
 
     if (visible && !wasVisible && focus) {
-      pageTitle.focus({ preventScroll: true });
+      pageBack.focus({ preventScroll: true });
     } else if (!visible && pageOverlay.contains(document.activeElement)) {
       document.activeElement.blur();
     }
@@ -444,10 +444,7 @@
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
 
-    if (e.shiftKey && document.activeElement === pageTitle) {
-      e.preventDefault();
-      last.focus();
-    } else if (e.shiftKey && document.activeElement === first) {
+    if (e.shiftKey && document.activeElement === first) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && document.activeElement === last) {
