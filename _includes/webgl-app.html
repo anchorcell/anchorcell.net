@@ -1,28 +1,39 @@
-<div class="webglApp" aria-hidden="true"><canvas id="gl"></canvas>
-    <main class="siteOverlay"><a class="bandTitle" href="{{ '/' | relative_url }}">anchorcell</a>{% include nav.html %}
+<div class="webglApp">
+    <canvas id="gl" role="img" aria-label="Interactive visualization of Anaximander's universe"></canvas>
+    <main class="siteOverlay" aria-label="anchorcell navigation" aria-hidden="true" inert>
+        <a class="bandTitle" href="{{ '/' | relative_url }}">anchorcell</a>
+        {% include nav.html %}
     </main>
-    <div id="sunLabel" class="label">sun</div>
-    <div id="moonLabel" class="label">moon</div>
-    <div id="earthLabel" class="label">earth</div>
-    <div id="starsLabel" class="label">stars</div>
-    <div id="nLabel" class="label">N</div>
-    <div id="sLabel" class="label">S</div><button id="modeToggle" class="modeToggle">interact</button>
-    <div id="uiPanel" class="ui">
-        <button id="play">pause</button>
-        <button id="reset">reset view</button>
-        <button id="now">now</button>
-        <div class="row"><label>aspect:</label><input id="dateTime" type="datetime-local">
-            <div id="datev" class="value"></div>
+    <div id="sunLabel" class="label" aria-hidden="true">sun</div>
+    <div id="moonLabel" class="label" aria-hidden="true">moon</div>
+    <div id="earthLabel" class="label" aria-hidden="true">earth</div>
+    <div id="starsLabel" class="label" aria-hidden="true">stars</div>
+    <div id="nLabel" class="label" aria-hidden="true">N</div>
+    <div id="sLabel" class="label" aria-hidden="true">S</div>
+    <button id="modeToggle" class="modeToggle" type="button" aria-controls="uiPanel" aria-expanded="false" aria-hidden="true" tabindex="-1">
+        interact
+    </button>
+    <div id="uiPanel" class="ui" role="group" aria-label="visualization controls" aria-hidden="true" inert>
+        <button id="play" type="button">pause</button>
+        <button id="reset" type="button">reset view</button>
+        <button id="now" type="button">now</button>
+        <div class="row">
+            <label for="dateTime">aspect:</label>
+            <input id="dateTime" type="datetime-local" aria-describedby="datev">
+            <output id="datev" class="value" aria-live="polite"></output>
         </div>
-        <div class="row"><label>kinesis:</label><input id="speed" type="range" min="1" max="100000" value="1">
-            <div id="speedv" class="value"></div>
+        <div class="row">
+            <label for="speed">kinesis:</label>
+            <input id="speed" type="range" min="1" max="100000" value="1" aria-describedby="speedv">
+            <output id="speedv" class="value" aria-live="polite"></output>
         </div>
-        <div id="heavensReadout"></div>
+        <div id="heavensReadout" role="status" aria-live="polite"></div>
     </div>
-    <section id="pageOverlay" class="pageOverlay">
-        <div class="pageInner"><button id="pageBack" class="pageBack">Back</button>
+    <section id="pageOverlay" class="pageOverlay" aria-labelledby="pageTitle" aria-hidden="true" inert>
+        <div class="pageInner">
             <div id="pageKicker">anchorcell</div>
-            <h1 id="pageTitle" class="pageTitle">news</h1>
+            <h1 id="pageTitle" class="pageTitle" tabindex="-1">news</h1>
+            <button id="pageBack" class="pageBack" type="button">go back</button>
             <div id="pageBody" class="pageBody"></div>
         </div>
     </section>

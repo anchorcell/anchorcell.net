@@ -1,503 +1,1859 @@
-
 (() => {
-    if (window.__ANCHORCELL_WEBGL_STARTED__) return;
-    window.__ANCHORCELL_WEBGL_STARTED__ = true;
+  if (globalThis.__ANCHORCELL_WEBGL_STARTED__) return;
+  globalThis.__ANCHORCELL_WEBGL_STARTED__ = true;
 
-    const canvas = document.getElementById('gl');
+  const canvas = document.getElementById("gl");
 
-    if (!canvas) {
-        document.documentElement.classList.add('no-webgl');
-        window.__ANCHORCELL_WEBGL_STARTED__ = false;
-        return;
+  if (!canvas) {
+    document.documentElement.classList.add("no-webgl");
+    globalThis.__ANCHORCELL_WEBGL_STARTED__ = false;
+    return;
+  }
+
+  function createWebGLContext(canvas) {
+    const contextNames = ["webgl", "experimental-webgl"];
+
+    const optionSets = [
+      { antialias: true, alpha: false },
+      { antialias: false, alpha: false },
+      { antialias: true, alpha: true },
+      { antialias: false, alpha: true },
+      {},
+    ];
+
+    for (const contextName of contextNames) {
+      for (const contextOptions of optionSets) {
+        try {
+          const context = canvas.getContext(contextName, contextOptions);
+
+          if (context) {
+            return context;
+          }
+        } catch {
+          // Try the next option set.
+        }
+      }
     }
 
-    function createGLContext(canvas) {
-        const contextNames = ['webgl', 'experimental-webgl'];
+    return null;
+  }
 
-        const optionSets = [
-            { antialias: true, alpha: false },
-            { antialias: false, alpha: false },
-            { antialias: true, alpha: true },
-            { antialias: false, alpha: true },
-            {}
+  const gl = createWebGLContext(canvas);
+
+  if (!gl) {
+    document.documentElement.classList.remove("webgl-ready");
+    document.documentElement.classList.add("no-webgl");
+    globalThis.__ANCHORCELL_WEBGL_STARTED__ = false;
+    return;
+  }
+
+  document.documentElement.classList.remove("no-webgl");
+  document.documentElement.classList.add("webgl-ready");
+
+  const FULL_TURN_RADIANS = Math.PI * 2,
+    MILLISECONDS_PER_DAY = 86400000,
+    DAYS_PER_TROPICAL_YEAR = 365.2422,
+    LUNAR_MONTH_DAYS = 29.530588853,
+    palette = {
+      white: [1, 1, 1, 1],
+      sun: [.918, .878, .639, 1],
+      moon: [.651, .761, .937, 1],
+      black: [0, 0, 0, 1],
+    };
+  const renderParams = {
+    starRadius: 1.5,
+    latitudeMargin: 25 * Math.PI / 180,
+    sunOuterRadius: 4.45,
+    sunInnerRadius: 4.05,
+    moonOuterRadius: 2.76,
+    moonInnerRadius: 2.36,
+    lineThickness: .04,
+    arrowDepthOffset: .12,
+    basisAzimuth: -40 * Math.PI / 180,
+    basisInclination: -52.5 * Math.PI / 180,
+    axialTiltDegrees: 23.44,
+    lunarInclinationDegrees: 5.14,
+    declinationScale: 1.38,
+    sunAngle: 300 * Math.PI / 180,
+    moonAngle: 60 * Math.PI / 180,
+    earthRadius: .15,
+    earthHalfHeight: .025,
+    rayTargetScale: 2,
+  };
+  const initialView = {
+    yaw: -Math.PI / 4 + 2.2,
+    pitch: Math.atan(1 / Math.sqrt(2)) - 0.25,
+    zoom: 123.75757575757575,
+    referenceHeight: 1021,
+  };
+  const sceneState = {
+    yaw: initialView.yaw,
+    pitch: initialView.pitch,
+    zoom: initialView.zoom,
+    isPlaying: true,
+    timeMs: Date.now(),
+    timeScale: 1,
+    previousFrameTime: performance.now(),
+    isInteractive: false,
+    baseYaw: initialView.yaw,
+    basePitch: initialView.pitch,
+    targetYaw: initialView.yaw,
+    targetPitch: initialView.pitch,
+    lastReadoutAt: 0,
+    earthOnTop: false,
+    zoomMultiplier: 1,
+  };
+  const getElement = (id) => document.getElementById(id),
+    dateTimeInput = getElement("dateTime"),
+    speedInput = getElement("speed"),
+    uiPanel = getElement("uiPanel"),
+    modeToggle = getElement("modeToggle"),
+    siteOverlay = document.querySelector(".siteOverlay"),
+    pageOverlay = getElement("pageOverlay"),
+    pageBack = getElement("pageBack"),
+    pageTitle = getElement("pageTitle"),
+    pageBody = getElement("pageBody"),
+    pageKicker = getElement("pageKicker"),
+    labels = {
+      sun: getElement("sunLabel"),
+      moon: getElement("moonLabel"),
+      earth: getElement("earthLabel"),
+      stars: getElement("starsLabel"),
+      N: getElement("nLabel"),
+      S: getElement("sLabel"),
+    };
+  const sceneVertexShader =
+    `attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uPoint;varying vec4 vCol;void main(){vec4 q=uM*vec4(aPos,1.);vec2 clip=vec2(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5));gl_Position=vec4(clip,-q.z/96.,1.);gl_PointSize=uPoint;vCol=aCol;}`;
+  const fragmentShader =
+    `precision mediump float;varying vec4 vCol;void main(){gl_FragColor=vCol;}`;
+  function createShader(shaderType, source) {
+    const shader = gl.createShader(shaderType);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw Error(gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+  const sceneProgram = gl.createProgram();
+  gl.attachShader(
+    sceneProgram,
+    createShader(gl.VERTEX_SHADER, sceneVertexShader),
+  );
+  gl.attachShader(
+    sceneProgram,
+    createShader(gl.FRAGMENT_SHADER, fragmentShader),
+  );
+  gl.linkProgram(sceneProgram);
+  gl.useProgram(sceneProgram);
+  const sceneLocations = {
+      position: gl.getAttribLocation(sceneProgram, "aPos"),
+      color: gl.getAttribLocation(sceneProgram, "aCol"),
+      modelMatrix: gl.getUniformLocation(sceneProgram, "uM"),
+      resolution: gl.getUniformLocation(sceneProgram, "uRes"),
+      zoom: gl.getUniformLocation(sceneProgram, "uZoom"),
+      pointSize: gl.getUniformLocation(sceneProgram, "uPoint"),
+    },
+    positionBuffer = gl.createBuffer(),
+    colorBuffer = gl.createBuffer();
+  const pathVertexShader =
+    `attribute vec3 aPrev;attribute vec3 aCurr;attribute vec3 aNext;attribute float aSide;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uThickness;varying vec4 vCol;vec4 project(vec3 p){vec4 q=uM*vec4(p,1.);return vec4(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5),-q.z/96.,1.);}void main(){vec4 pp=project(aPrev),cc=project(aCurr),nn=project(aNext);float aspect=uRes.x/uRes.y;vec2 p=pp.xy*vec2(aspect,1.),c=cc.xy*vec2(aspect,1.),n=nn.xy*vec2(aspect,1.);vec2 d0=normalize(c-p),d1=normalize(n-c);vec2 tangent=normalize(d0+d1);if(length(tangent)<.01)tangent=d1;vec2 miter=vec2(-tangent.y,tangent.x);vec2 normal=vec2(-d1.y,d1.x);float denom=max(.25,abs(dot(miter,normal)));float len=(uThickness/uRes.y)/denom;vec2 off=miter*aSide*len;off.x/=aspect;gl_Position=cc;gl_Position.xy+=off;vCol=aCol;}`;
+  const pathProgram = gl.createProgram();
+  gl.attachShader(
+    pathProgram,
+    createShader(gl.VERTEX_SHADER, pathVertexShader),
+  );
+  gl.attachShader(
+    pathProgram,
+    createShader(gl.FRAGMENT_SHADER, fragmentShader),
+  );
+  gl.linkProgram(pathProgram);
+  const pathLocations = {
+      previous: gl.getAttribLocation(pathProgram, "aPrev"),
+      current: gl.getAttribLocation(pathProgram, "aCurr"),
+      next: gl.getAttribLocation(pathProgram, "aNext"),
+      side: gl.getAttribLocation(pathProgram, "aSide"),
+      color: gl.getAttribLocation(pathProgram, "aCol"),
+      modelMatrix: gl.getUniformLocation(pathProgram, "uM"),
+      resolution: gl.getUniformLocation(pathProgram, "uRes"),
+      zoom: gl.getUniformLocation(pathProgram, "uZoom"),
+      thickness: gl.getUniformLocation(pathProgram, "uThickness"),
+    },
+    previousPathBuffer = gl.createBuffer(),
+    currentPathBuffer = gl.createBuffer(),
+    nextPathBuffer = gl.createBuffer(),
+    pathSideBuffer = gl.createBuffer(),
+    pathColorBuffer = gl.createBuffer();
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  try {
+    gl.lineWidth(3);
+  } catch {
+    // Some contexts ignore line width changes.
+  }
+  function vec3(x = 0, y = 0, z = 0) {
+    return { x, y, z };
+  }
+  function addVec3(first, second) {
+    return vec3(
+      first.x + second.x,
+      first.y + second.y,
+      first.z + second.z,
+    );
+  }
+  function subtractVec3(minuend, subtrahend) {
+    return vec3(
+      minuend.x - subtrahend.x,
+      minuend.y - subtrahend.y,
+      minuend.z - subtrahend.z,
+    );
+  }
+  function scaleVec3(vector, scalar) {
+    return vec3(vector.x * scalar, vector.y * scalar, vector.z * scalar);
+  }
+  function normalizeVec3(vector) {
+    const length = Math.hypot(vector.x, vector.y, vector.z) || 1;
+    return scaleVec3(vector, 1 / length);
+  }
+  function celestialBasis() {
+    const azimuth = renderParams.basisAzimuth;
+    const inclination = renderParams.basisInclination;
+
+    return {
+      axis: vec3(
+        Math.sin(inclination) * Math.cos(azimuth),
+        Math.sin(inclination) * Math.sin(azimuth),
+        Math.cos(inclination),
+      ),
+      xAxis: vec3(
+        Math.cos(azimuth) * Math.cos(inclination),
+        Math.sin(azimuth) * Math.cos(inclination),
+        -Math.sin(inclination),
+      ),
+      yAxis: vec3(-Math.sin(azimuth), Math.cos(azimuth), 0),
+    };
+  }
+  function celestialToWorld(celestialPoint) {
+    const basis = celestialBasis();
+
+    return addVec3(
+      addVec3(
+        scaleVec3(basis.xAxis, celestialPoint.x),
+        scaleVec3(basis.yAxis, celestialPoint.y),
+      ),
+      scaleVec3(basis.axis, celestialPoint.z),
+    );
+  }
+  function rotationMatrix() {
+    const cosYaw = Math.cos(sceneState.yaw);
+    const sinYaw = Math.sin(sceneState.yaw);
+    const cosPitch = Math.cos(sceneState.pitch);
+    const sinPitch = Math.sin(sceneState.pitch);
+
+    return new Float32Array([
+      cosYaw,
+      sinPitch * sinYaw,
+      -cosPitch * sinYaw,
+      0,
+      0,
+      cosPitch,
+      sinPitch,
+      0,
+      sinYaw,
+      -sinPitch * cosYaw,
+      cosPitch * cosYaw,
+      0,
+      0,
+      0,
+      0,
+      1,
+    ]);
+  }
+  function worldToView(worldPoint) {
+    const cosYaw = Math.cos(sceneState.yaw);
+    const sinYaw = Math.sin(sceneState.yaw);
+    const viewX = cosYaw * worldPoint.x + sinYaw * worldPoint.z;
+    const rotatedZ = -sinYaw * worldPoint.x + cosYaw * worldPoint.z;
+    const cosPitch = Math.cos(sceneState.pitch);
+    const sinPitch = Math.sin(sceneState.pitch);
+    const viewY = worldPoint.y;
+
+    return {
+      x: viewX,
+      y: cosPitch * viewY - sinPitch * rotatedZ,
+      z: sinPitch * viewY + cosPitch * rotatedZ,
+    };
+  }
+  function viewToWorld(viewPoint) {
+    const cosPitch = Math.cos(sceneState.pitch);
+    const sinPitch = Math.sin(sceneState.pitch);
+    const cosYaw = Math.cos(sceneState.yaw);
+    const sinYaw = Math.sin(sceneState.yaw);
+    const worldY = cosPitch * viewPoint.y + sinPitch * viewPoint.z;
+    const rotatedZ = -sinPitch * viewPoint.y + cosPitch * viewPoint.z;
+    const worldX = viewPoint.x;
+
+    return vec3(
+      cosYaw * worldX - sinYaw * rotatedZ,
+      worldY,
+      sinYaw * worldX + cosYaw * rotatedZ,
+    );
+  }
+  function projectWorldToScreen(worldPoint) {
+    const viewPoint = worldToView(worldPoint);
+    const devicePixelRatio = canvas.width / innerWidth;
+
+    return {
+      x: innerWidth / 2 + viewPoint.x * sceneState.zoom / devicePixelRatio,
+      y: innerHeight / 2 - viewPoint.y * sceneState.zoom / devicePixelRatio,
+      z: viewPoint.z,
+    };
+  }
+  function padTwoDigits(value) {
+    return String(value).padStart(2, "0");
+  }
+  function formatDateTimeInput(timeMs) {
+    const date = new Date(timeMs);
+    return date.getFullYear() + "-" +
+      padTwoDigits(date.getMonth() + 1) + "-" +
+      padTwoDigits(date.getDate()) + "T" +
+      padTwoDigits(date.getHours()) + ":" +
+      padTwoDigits(date.getMinutes());
+  }
+  function parseDateTimeInput(inputValue) {
+    const timestamp = new Date(inputValue).getTime();
+    return Number.isFinite(timestamp) ? timestamp : sceneState.timeMs;
+  }
+  dateTimeInput.value = formatDateTimeInput(sceneState.timeMs);
+  getElement("play").onclick = () => {
+    sceneState.isPlaying = !sceneState.isPlaying;
+    getElement("play").textContent = sceneState.isPlaying ? "pause" : "resume";
+  };
+  getElement("reset").onclick = () => {
+    sceneState.yaw = sceneState.baseYaw = sceneState.targetYaw = initialView
+      .yaw;
+    sceneState.pitch =
+      sceneState.basePitch =
+      sceneState.targetPitch =
+        initialView.pitch;
+    sceneState.zoom = fitViewportZoom() * (canvas.width / innerWidth);
+  };
+  getElement("now").onclick = () => {
+    sceneState.timeMs = Date.now();
+    dateTimeInput.value = formatDateTimeInput(sceneState.timeMs);
+  };
+  function commitDateTimeInput() {
+    sceneState.timeMs = parseDateTimeInput(dateTimeInput.value);
+    dateTimeInput.value = formatDateTimeInput(sceneState.timeMs);
+    updateReadouts();
+  }
+  dateTimeInput.oninput = () => {
+    let t = new Date(dateTimeInput.value).getTime();
+    if (Number.isFinite(t)) sceneState.timeMs = t;
+  };
+  dateTimeInput.onchange = commitDateTimeInput;
+  dateTimeInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitDateTimeInput();
+      dateTimeInput.blur();
+    }
+  });
+  speedInput.oninput = () => sceneState.timeScale = +speedInput.value;
+
+  const sectionHtmlByKey = globalThis.ANCHORCELL_CONTENT || {},
+    initialPageData = globalThis.ANCHORCELL_PAGE || {},
+    routeTable = globalThis.ANCHORCELL_ROUTES || {},
+    homeRoute = routeTable.home || "/",
+    sectionRoutes = Object.entries(routeTable).filter(([key]) =>
+      key !== "home"
+    ),
+    pageTransition = {
+      phase: "home",
+      pageData: null,
+      startedAtMs: 0,
+      durationMs: 950,
+      returnFocusElement: null,
+    };
+
+  function setPageOverlayVisible(visible, { focus = true } = {}) {
+    const wasVisible = pageOverlay.classList.contains("show");
+    pageOverlay.classList.toggle("show", visible);
+    pageOverlay.setAttribute("aria-hidden", String(!visible));
+    pageOverlay.inert = !visible;
+
+    if (visible && !wasVisible && focus) {
+      pageTitle.focus({ preventScroll: true });
+    } else if (!visible && pageOverlay.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+  }
+
+  function setSiteOverlayVisible(visible) {
+    siteOverlay.classList.toggle("faded", !visible);
+    siteOverlay.setAttribute("aria-hidden", String(!visible));
+    siteOverlay.inert = !visible;
+  }
+
+  function setModeToggleVisible(visible) {
+    modeToggle.style.opacity = visible ? "1" : "0";
+    modeToggle.setAttribute("aria-hidden", String(!visible));
+    modeToggle.tabIndex = visible ? 0 : -1;
+  }
+
+  function setInteractionPanelVisible(visible) {
+    uiPanel.classList.toggle("show", visible);
+    uiPanel.setAttribute("aria-hidden", String(!visible));
+    uiPanel.inert = !visible;
+    modeToggle.setAttribute("aria-expanded", String(visible));
+    modeToggle.setAttribute(
+      "aria-label",
+      visible ? "Leave interaction mode" : "Enter interaction mode",
+    );
+  }
+
+  function restorePageFocus() {
+    const target = pageTransition.returnFocusElement ||
+      siteOverlay.querySelector(".bandTitle");
+    pageTransition.returnFocusElement = null;
+
+    if (target instanceof HTMLElement && document.contains(target)) {
+      target.focus({ preventScroll: true });
+    }
+  }
+
+  const focusableSelector = [
+    "a[href]",
+    "button:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(",");
+
+  function trapPageTab(e) {
+    if (e.key !== "Tab" || pageOverlay.inert) return;
+
+    const focusable = [...pageOverlay.querySelectorAll(focusableSelector)]
+      .filter((el) => el.getClientRects().length);
+
+    if (!focusable.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey && document.activeElement === pageTitle) {
+      e.preventDefault();
+      last.focus();
+    } else if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  setInteractionPanelVisible(false);
+  setModeToggleVisible(true);
+  setSiteOverlayVisible(true);
+
+  modeToggle.onclick = () => {
+    sceneState.isInteractive = !sceneState.isInteractive;
+    setInteractionPanelVisible(sceneState.isInteractive);
+    setSiteOverlayVisible(!sceneState.isInteractive);
+    modeToggle.textContent = sceneState.isInteractive ? "shun" : "interact";
+    dragState = null;
+    sceneState.baseYaw = sceneState.yaw;
+    sceneState.basePitch = sceneState.pitch;
+    sceneState.targetYaw = sceneState.yaw;
+    sceneState.targetPitch = sceneState.pitch;
+  };
+
+  async function fetchRenderedPage(url) {
+    const res = await fetch(url);
+
+    if (!res.ok) {
+      throw new Error("Could not load " + url);
+    }
+
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    const root = doc.querySelector(".staticFallbackPage") || doc;
+    const title = root.querySelector(".pageTitle");
+    const kicker = root.querySelector("#pageKicker, .pageKicker");
+    const body = root.querySelector(".pageBody");
+    const back = root.querySelector(".pageBack");
+
+    if (!body) {
+      throw new Error("No page body found in " + url);
+    }
+
+    return {
+      type: "fetched",
+      key: url,
+      title: title ? title.textContent.trim() : "news",
+      kicker: kicker ? kicker.textContent.trim() : "anchorcell / news",
+      backUrl: back ? back.getAttribute("href") || homeRoute : homeRoute,
+      backLabel: back ? back.textContent.trim() || "go back" : "go back",
+      body: body.innerHTML,
+    };
+  }
+
+  function normalizePathname(candidatePath) {
+    return new URL(candidatePath || homeRoute, location.href).pathname
+      .replace(/\/+$/, "") || "/";
+  }
+
+  function sectionKeyForPath(candidatePath) {
+    const targetPath = normalizePathname(candidatePath);
+    return sectionRoutes.find(([, route]) =>
+      normalizePathname(route) === targetPath
+    )
+      ?.[0] ||
+      null;
+  }
+
+  function currentPageMatchesLocation() {
+    return !initialPageData.isHome &&
+      normalizePathname(initialPageData.url) ===
+        normalizePathname(location.pathname);
+  }
+
+  function pageDataForSection(sectionKey) {
+    return {
+      type: "section",
+      key: sectionKey,
+      title: sectionKey,
+      kicker: "anchorcell / " + sectionKey,
+      backUrl: homeRoute,
+      backLabel: "go back",
+      body: sectionHtmlByKey[sectionKey] || "<p>More soon.</p>",
+    };
+  }
+
+  function pageDataForLocation() {
+    const sectionKey = sectionKeyForPath(location.pathname);
+
+    if (sectionKey) {
+      return pageDataForSection(sectionKey);
+    }
+
+    if (currentPageMatchesLocation()) {
+      return {
+        type: "page",
+        key: initialPageData.url,
+        title: initialPageData.title ||
+          document.title.replace(/\s*\/.*$/, ""),
+        kicker: initialPageData.kicker || initialPageData.title || "anchorcell",
+        backUrl: initialPageData.backUrl || homeRoute,
+        backLabel: initialPageData.backLabel || "go back",
+        body: initialPageData.body || "<p>More soon.</p>",
+      };
+    }
+
+    return null;
+  }
+
+  const SITE_TITLE = "anchorcell";
+
+  function setDocumentTitle(data) {
+    const title = data && data.title ? String(data.title).trim() : "";
+
+    if (!title || title.toLowerCase() === SITE_TITLE.toLowerCase()) {
+      document.title = SITE_TITLE;
+    } else {
+      document.title = title + " / " + SITE_TITLE;
+    }
+  }
+
+  function setHomeDocumentTitle() {
+    document.title = SITE_TITLE;
+  }
+
+  function setPage(pageDataOrKey) {
+    const pageData = typeof pageDataOrKey === "string"
+      ? pageDataForSection(pageDataOrKey)
+      : pageDataOrKey;
+
+    if (!pageData) return;
+
+    pageTransition.pageData = pageData;
+
+    setDocumentTitle(pageData);
+
+    pageTitle.textContent = (pageData.title || "").toLowerCase();
+    pageKicker.textContent = pageData.kicker || "anchorcell";
+    pageBack.textContent = String(pageData.backLabel || "go back")
+      .toLowerCase();
+    pageBack.dataset.backUrl = pageData.backUrl || homeRoute;
+
+    const content = pageData.body;
+    pageBody.innerHTML = Array.isArray(content)
+      ? content.map((x) => "<p>" + x + "</p>").join("")
+      : (content || "<p>More soon.</p>");
+  }
+
+  async function openSectionPage(sectionKey, options = {}) {
+    if (pageTransition.phase !== "home" && !options.force) return;
+
+    const route = routeTable[sectionKey];
+    if (!route) return;
+    if (!options.noHistory) {
+      const activeElement = document.activeElement;
+      pageTransition.returnFocusElement = siteOverlay.contains(activeElement)
+        ? activeElement
+        : null;
+    }
+
+    let pageData;
+
+    if (sectionKey === "news") {
+      try {
+        pageData = await fetchRenderedPage(route);
+      } catch {
+        if (!options.noHistory) {
+          location.href = route;
+        }
+        return;
+      }
+    } else {
+      if (!sectionHtmlByKey[sectionKey]) return;
+      pageData = pageDataForSection(sectionKey);
+    }
+
+    if (!options.noHistory) {
+      history.pushState({ section: sectionKey }, "", route);
+    }
+
+    sceneState.earthOnTop = true;
+    pageTransition.phase = "entering";
+    pageTransition.startedAtMs = performance.now();
+
+    setPage(pageData);
+
+    setSiteOverlayVisible(false);
+    setModeToggleVisible(false);
+  }
+
+  function closePageOverlay(options = {}) {
+    if (pageTransition.phase !== "open") return;
+
+    const backUrl =
+      (pageTransition.pageData && pageTransition.pageData.backUrl) ||
+      homeRoute;
+
+    // Posts should go back to /news/, not animate to homepage.
+    if (backUrl !== homeRoute && !options.noHistory) {
+      location.href = backUrl;
+      return;
+    }
+
+    // Section overlays still animate back to home.
+    if (!options.noHistory) {
+      history.pushState({ section: "home" }, "", homeRoute);
+    }
+
+    setHomeDocumentTitle();
+
+    pageTransition.phase = "leaving";
+    pageTransition.startedAtMs = performance.now();
+    setPageOverlayVisible(false);
+  }
+
+  siteOverlay.querySelectorAll("nav a").forEach((a) =>
+    a.onclick = (e) => {
+      const section = sectionKeyForPath(a.href);
+      if (section) {
+        e.preventDefault();
+        openSectionPage(section);
+      }
+    }
+  );
+  pageBack.onclick = () => closePageOverlay();
+  pageOverlay.addEventListener("keydown", trapPageTab);
+  addEventListener("popstate", () => {
+    const pageData = pageDataForLocation();
+
+    if (pageData) {
+      pageTransition.phase = "open";
+      setPage(pageData);
+      setPageOverlayVisible(true);
+      setSiteOverlayVisible(false);
+      setModeToggleVisible(false);
+    } else if (pageTransition.phase === "open") {
+      closePageOverlay({ noHistory: true });
+    }
+  });
+  function fitViewportZoom() {
+    return initialView.zoom * (innerHeight / initialView.referenceHeight);
+  }
+  function resize() {
+    const pixelRatio = Math.max(1, Math.min(1.5, devicePixelRatio || 1));
+    canvas.width = Math.floor(innerWidth * pixelRatio);
+    canvas.height = Math.floor(innerHeight * pixelRatio);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    sceneState.zoom = fitViewportZoom() * pixelRatio;
+  }
+  addEventListener("resize", resize);
+  resize();
+  let dragState = null;
+  function updateAmbientCamera(pointerX, pointerY) {
+    const horizontalBias = (pointerX / innerWidth - .5) * 2;
+    const verticalBias = (pointerY / innerHeight - .5) * 2;
+
+    sceneState.targetYaw = sceneState.baseYaw + horizontalBias * .085;
+    sceneState.targetPitch = Math.max(
+      -1.5,
+      Math.min(1.5, sceneState.basePitch - verticalBias * .065),
+    );
+  }
+  canvas.onpointerdown = (event) => {
+    if (sceneState.isInteractive) {
+      dragState = {
+        startX: event.clientX,
+        startY: event.clientY,
+        startYaw: sceneState.yaw,
+        startPitch: sceneState.pitch,
+      };
+      canvas.setPointerCapture(event.pointerId);
+    } else {
+      updateAmbientCamera(event.clientX, event.clientY);
+    }
+  };
+  canvas.onpointermove = (event) => {
+    if (sceneState.isInteractive && dragState) {
+      sceneState.yaw = dragState.startYaw +
+        (event.clientX - dragState.startX) * .008;
+      sceneState.pitch = Math.max(
+        -1.5,
+        Math.min(
+          1.5,
+          dragState.startPitch + (event.clientY - dragState.startY) * .008,
+        ),
+      );
+      sceneState.baseYaw = sceneState.yaw;
+      sceneState.basePitch = sceneState.pitch;
+    } else if (!sceneState.isInteractive && event.pointerType === "mouse") {
+      updateAmbientCamera(event.clientX, event.clientY);
+    }
+  };
+  addEventListener("pointermove", (event) => {
+    if (!sceneState.isInteractive && event.pointerType === "mouse") {
+      updateAmbientCamera(event.clientX, event.clientY);
+    }
+  }, { passive: true });
+  canvas.onpointerup = () => dragState = null;
+  canvas.onpointercancel = () => dragState = null;
+  canvas.onwheel = (e) => {
+    if (!sceneState.isInteractive) return;
+    e.preventDefault();
+    sceneState.zoom *= Math.exp(-e.deltaY * .001);
+    sceneState.zoom = Math.max(34, Math.min(260, sceneState.zoom));
+  };
+  function daysSinceEpoch() {
+    return sceneState.timeMs / MILLISECONDS_PER_DAY;
+  }
+  function localDayFraction() {
+    const date = new Date(sceneState.timeMs);
+    return (date.getHours() + date.getMinutes() / 60 +
+      date.getSeconds() / 3600 +
+      date.getMilliseconds() / 36e5) / 24;
+  }
+  function solarSeasonAngle() {
+    const year = new Date(sceneState.timeMs).getFullYear();
+    const equinoxTimeMs = new Date(year, 2, 20, 12).getTime();
+    return FULL_TURN_RADIANS *
+      ((sceneState.timeMs - equinoxTimeMs) / MILLISECONDS_PER_DAY) /
+      DAYS_PER_TROPICAL_YEAR;
+  }
+  function lunarCycleAngle() {
+    const lunarEpochTimeMs = Date.UTC(2000, 0, 6, 18, 14);
+    return FULL_TURN_RADIANS *
+      ((sceneState.timeMs - lunarEpochTimeMs) / MILLISECONDS_PER_DAY /
+        LUNAR_MONTH_DAYS);
+  }
+  function solarDeclination() {
+    return renderParams.axialTiltDegrees * Math.sin(solarSeasonAngle());
+  }
+  function lunarDeclination() {
+    const lunarAngle = lunarCycleAngle();
+    const ascendingNodeAngle = FULL_TURN_RADIANS *
+      ((daysSinceEpoch() - 10957) / 6798);
+    return renderParams.axialTiltDegrees *
+        Math.sin(solarSeasonAngle() + lunarAngle) +
+      renderParams.lunarInclinationDegrees *
+        Math.sin(lunarAngle - ascendingNodeAngle);
+  }
+  function declinationOffset(declinationDegrees) {
+    return renderParams.declinationScale * declinationDegrees /
+      renderParams.axialTiltDegrees;
+  }
+  function sunDepth(depth) {
+    return depth + declinationOffset(solarDeclination());
+  }
+  function moonDepth(depth) {
+    return depth + declinationOffset(lunarDeclination());
+  }
+  function appendVertex(batch, position, color) {
+    batch.positions.push(position.x, position.y, position.z);
+    batch.colors.push(color[0], color[1], color[2], color[3]);
+  }
+  function appendLine(batch, start, end, color) {
+    appendVertex(batch, start, color);
+    appendVertex(batch, end, color);
+  }
+  function appendTriangle(batch, first, second, third, color) {
+    appendVertex(batch, first, color);
+    appendVertex(batch, second, color);
+    appendVertex(batch, third, color);
+  }
+  function appendAnnulus(
+    batch,
+    depth,
+    outerRadius,
+    innerRadius,
+    color,
+    segmentCount = 300,
+    startAngle = 0,
+    endAngle = FULL_TURN_RADIANS,
+  ) {
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      let startSegmentAngle = startAngle +
+          (endAngle - startAngle) * segmentIndex / segmentCount,
+        endSegmentAngle = startAngle +
+          (endAngle - startAngle) * (segmentIndex + 1) / segmentCount,
+        outerStart = celestialToWorld(
+          vec3(
+            outerRadius * Math.cos(startSegmentAngle),
+            outerRadius * Math.sin(startSegmentAngle),
+            depth,
+          ),
+        ),
+        innerStart = celestialToWorld(
+          vec3(
+            innerRadius * Math.cos(startSegmentAngle),
+            innerRadius * Math.sin(startSegmentAngle),
+            depth,
+          ),
+        ),
+        outerEnd = celestialToWorld(
+          vec3(
+            outerRadius * Math.cos(endSegmentAngle),
+            outerRadius * Math.sin(endSegmentAngle),
+            depth,
+          ),
+        ),
+        innerEnd = celestialToWorld(
+          vec3(
+            innerRadius * Math.cos(endSegmentAngle),
+            innerRadius * Math.sin(endSegmentAngle),
+            depth,
+          ),
+        );
+      appendTriangle(batch, outerStart, innerStart, outerEnd, color);
+      appendTriangle(batch, outerEnd, innerStart, innerEnd, color);
+    }
+  }
+  function appendSideWall(
+    batch,
+    lowerDepth,
+    upperDepth,
+    radius,
+    color,
+    segmentCount = 180,
+  ) {
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      let startAngle = segmentIndex * FULL_TURN_RADIANS / segmentCount,
+        endAngle = (segmentIndex + 1) * FULL_TURN_RADIANS / segmentCount,
+        lowerStart = celestialToWorld(
+          vec3(
+            radius * Math.cos(startAngle),
+            radius * Math.sin(startAngle),
+            lowerDepth,
+          ),
+        ),
+        lowerEnd = celestialToWorld(
+          vec3(
+            radius * Math.cos(endAngle),
+            radius * Math.sin(endAngle),
+            lowerDepth,
+          ),
+        ),
+        upperStart = celestialToWorld(
+          vec3(
+            radius * Math.cos(startAngle),
+            radius * Math.sin(startAngle),
+            upperDepth,
+          ),
+        ),
+        upperEnd = celestialToWorld(
+          vec3(
+            radius * Math.cos(endAngle),
+            radius * Math.sin(endAngle),
+            upperDepth,
+          ),
+        );
+      appendTriangle(batch, lowerStart, lowerEnd, upperStart, color);
+      appendTriangle(batch, upperStart, lowerEnd, upperEnd, color);
+    }
+  }
+  function appendRingOcclusion(batch, depth, outerRadius, innerRadius) {
+    appendAnnulus(
+      batch,
+      depth - renderParams.lineThickness,
+      outerRadius,
+      innerRadius,
+      palette.black,
+    );
+    appendAnnulus(
+      batch,
+      depth + renderParams.lineThickness,
+      outerRadius,
+      innerRadius,
+      palette.black,
+    );
+    appendSideWall(
+      batch,
+      depth - renderParams.lineThickness,
+      depth + renderParams.lineThickness,
+      outerRadius,
+      palette.black,
+    );
+    appendSideWall(
+      batch,
+      depth - renderParams.lineThickness,
+      depth + renderParams.lineThickness,
+      innerRadius,
+      palette.black,
+    );
+  }
+  function circlePoints(
+    depth,
+    radius,
+    segmentCount = 360,
+    startAngle = 0,
+    endAngle = FULL_TURN_RADIANS,
+  ) {
+    const points = [];
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      const angle = startAngle +
+        (endAngle - startAngle) * segmentIndex / segmentCount;
+      points.push(
+        celestialToWorld(
+          vec3(radius * Math.cos(angle), radius * Math.sin(angle), depth),
+        ),
+      );
+    }
+    return points;
+  }
+  function drawThickPath(
+    points,
+    color,
+    closed = true,
+    thicknessPx = 3.5,
+  ) {
+    if (points.length < 2) return;
+
+    const previousPoints = [],
+      currentPoints = [],
+      nextPoints = [],
+      sideOffsets = [],
+      vertexColors = [],
+      pointCount = points.length,
+      segmentCount = closed ? pointCount : pointCount - 1;
+
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      const startIndex = segmentIndex,
+        endIndex = (segmentIndex + 1) % pointCount,
+        triangleCorners = [
+          [startIndex, -1],
+          [startIndex, 1],
+          [endIndex, -1],
+          [endIndex, -1],
+          [startIndex, 1],
+          [endIndex, 1],
         ];
 
-        for (const name of contextNames) {
-            for (const opts of optionSets) {
-                try {
-                    const ctx = canvas.getContext(name, opts);
+      for (const [pointIndex, sideOffset] of triangleCorners) {
+        let previousPoint = points[(pointIndex - 1 + pointCount) % pointCount],
+          currentPoint = points[pointIndex],
+          nextPoint = points[(pointIndex + 1) % pointCount];
 
-                    if (ctx) {
-                        return ctx;
-                    }
-                } catch (err) {
-                    // Try the next option set.
-                }
-            }
+        if (!closed) {
+          if (pointIndex === 0) {
+            previousPoint = addVec3(
+              currentPoint,
+              subtractVec3(currentPoint, nextPoint),
+            );
+          }
+          if (pointIndex === pointCount - 1) {
+            nextPoint = addVec3(
+              currentPoint,
+              subtractVec3(currentPoint, previousPoint),
+            );
+          }
         }
 
-        return null;
+        previousPoints.push(previousPoint.x, previousPoint.y, previousPoint.z);
+        currentPoints.push(currentPoint.x, currentPoint.y, currentPoint.z);
+        nextPoints.push(nextPoint.x, nextPoint.y, nextPoint.z);
+        sideOffsets.push(sideOffset);
+        vertexColors.push(color[0], color[1], color[2], color[3]);
+      }
     }
 
-    const gl = createGLContext(canvas);
+    gl.useProgram(pathProgram);
+    gl.uniformMatrix4fv(pathLocations.modelMatrix, false, rotationMatrix());
+    gl.uniform2f(pathLocations.resolution, canvas.width, canvas.height);
+    gl.uniform1f(
+      pathLocations.zoom,
+      sceneState.zoom * sceneState.zoomMultiplier,
+    );
+    gl.uniform1f(pathLocations.thickness, thicknessPx);
 
-    if (!gl) {
-        document.documentElement.classList.remove('webgl-ready');
-        document.documentElement.classList.add('no-webgl');
-        window.__ANCHORCELL_WEBGL_STARTED__ = false;
-        return;
+    function bindPathAttribute(
+      buffer,
+      attributeLocation,
+      data,
+      componentCount,
+    ) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STREAM_DRAW);
+      gl.vertexAttribPointer(
+        attributeLocation,
+        componentCount,
+        gl.FLOAT,
+        false,
+        0,
+        0,
+      );
+      gl.enableVertexAttribArray(attributeLocation);
     }
 
-    document.documentElement.classList.remove('no-webgl');
-    document.documentElement.classList.add('webgl-ready');
+    bindPathAttribute(
+      previousPathBuffer,
+      pathLocations.previous,
+      previousPoints,
+      3,
+    );
+    bindPathAttribute(
+      currentPathBuffer,
+      pathLocations.current,
+      currentPoints,
+      3,
+    );
+    bindPathAttribute(nextPathBuffer, pathLocations.next, nextPoints, 3);
+    bindPathAttribute(pathSideBuffer, pathLocations.side, sideOffsets, 1);
+    bindPathAttribute(pathColorBuffer, pathLocations.color, vertexColors, 4);
+    gl.drawArrays(gl.TRIANGLES, 0, currentPoints.length / 3);
+    gl.useProgram(sceneProgram);
+  }
+  function drawRingLines(depth, outerRadius, innerRadius, color) {
+    drawThickPath(
+      circlePoints(
+        depth - renderParams.lineThickness - .008,
+        outerRadius,
+        420,
+      ),
+      color,
+      true,
+      3.8,
+    );
+    drawThickPath(
+      circlePoints(
+        depth - renderParams.lineThickness - .008,
+        innerRadius,
+        420,
+      ),
+      color,
+      true,
+      3.8,
+    );
+    drawThickPath(
+      circlePoints(
+        depth + renderParams.lineThickness + .008,
+        outerRadius,
+        420,
+      ),
+      palette.white,
+      true,
+      3.8,
+    );
+    drawThickPath(
+      circlePoints(
+        depth + renderParams.lineThickness + .008,
+        innerRadius,
+        420,
+      ),
+      palette.white,
+      true,
+      3.8,
+    );
+  }
+  function frontFacingAngle(depth, radius) {
+    const center = worldToView(celestialToWorld(vec3(0, 0, depth)));
+    const xPoint = worldToView(
+      celestialToWorld(vec3(radius, 0, depth)),
+    );
+    const yPoint = worldToView(
+      celestialToWorld(vec3(0, radius, depth)),
+    );
 
-    const TAU = Math.PI * 2, MSD = 86400000, YR = 365.2422, LM = 29.530588853, C = { w: [1, 1, 1, 1], s: [.918, .878, .639, 1], m: [.651, .761, .937, 1], b: [0, 0, 0, 1] };
-    const P = {
-        starR: 1.5,
-        bread: 25 * Math.PI / 180,
-        sunOuter: 4.45,
-        sunInner: 4.05,
-        moonOuter: 2.76,
-        moonInner: 2.36,
-        thick: .04,
-        arrowZ: .12,
-        alpha: -40 * Math.PI / 180,
-        beta: -52.5 * Math.PI / 180,
-        obl: 23.44,
-        linc: 5.14,
-        declScale: 1.38,
-        sunAng: 300 * Math.PI / 180,
-        moonAng: 60 * Math.PI / 180,
-        earthR: .15,
-        earthH: .025,
-        rayTargetScale: 2,
-        axisInsetPx: 2.5
-    };
-    const START = { yaw: -Math.PI / 4 + 2.2, pitch: Math.atan(1 / Math.sqrt(2)) -0.25, zoom: 123.75757575757575, w: 1485, h: 1021 };
-    const S = { yaw: START.yaw, pitch: START.pitch, zoom: START.zoom, play: true, ms: Date.now(), speed: 1, last: performance.now(), interactive: false, baseYaw: START.yaw, basePitch: START.pitch, targetYaw: START.yaw, targetPitch: START.pitch, readoutLast: 0, topEarth: false, zm: 1 };
-    const $ = id => document.getElementById(id), dateTime = $('dateTime'), speed = $('speed'), uiPanel = $('uiPanel'), modeToggle = $('modeToggle'), siteOverlay = document.querySelector('.siteOverlay'), pageOverlay = $('pageOverlay'), pageBack = $('pageBack'), pageTitle = $('pageTitle'), pageBody = $('pageBody'), pageKicker = $('pageKicker'), labels = { sun: $('sunLabel'), moon: $('moonLabel'), earth: $('earthLabel'), stars: $('starsLabel'), N: $('nLabel'), S: $('sLabel') };
-    const vs = `attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uPoint;varying vec4 vCol;void main(){vec4 q=uM*vec4(aPos,1.);vec2 clip=vec2(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5));gl_Position=vec4(clip,-q.z/96.,1.);gl_PointSize=uPoint;vCol=aCol;}`;
-    const fs = `precision mediump float;varying vec4 vCol;void main(){gl_FragColor=vCol;}`;
-    function sh(t, s) { let h = gl.createShader(t); gl.shaderSource(h, s); gl.compileShader(h); if (!gl.getShaderParameter(h, gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(h)); return h } let prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(prog); gl.useProgram(prog); const loc = { pos: gl.getAttribLocation(prog, 'aPos'), col: gl.getAttribLocation(prog, 'aCol'), m: gl.getUniformLocation(prog, 'uM'), res: gl.getUniformLocation(prog, 'uRes'), zoom: gl.getUniformLocation(prog, 'uZoom'), point: gl.getUniformLocation(prog, 'uPoint') }, posBuf = gl.createBuffer(), colBuf = gl.createBuffer();
-    const pathVS = `attribute vec3 aPrev;attribute vec3 aCurr;attribute vec3 aNext;attribute float aSide;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uThickness;varying vec4 vCol;vec4 project(vec3 p){vec4 q=uM*vec4(p,1.);return vec4(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5),-q.z/96.,1.);}void main(){vec4 pp=project(aPrev),cc=project(aCurr),nn=project(aNext);float aspect=uRes.x/uRes.y;vec2 p=pp.xy*vec2(aspect,1.),c=cc.xy*vec2(aspect,1.),n=nn.xy*vec2(aspect,1.);vec2 d0=normalize(c-p),d1=normalize(n-c);vec2 tangent=normalize(d0+d1);if(length(tangent)<.01)tangent=d1;vec2 miter=vec2(-tangent.y,tangent.x);vec2 normal=vec2(-d1.y,d1.x);float denom=max(.25,abs(dot(miter,normal)));float len=(uThickness/uRes.y)/denom;vec2 off=miter*aSide*len;off.x/=aspect;gl_Position=cc;gl_Position.xy+=off;vCol=aCol;}`;
-    let pathProg = gl.createProgram(); gl.attachShader(pathProg, sh(gl.VERTEX_SHADER, pathVS)); gl.attachShader(pathProg, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pathProg); const ploc = { prev: gl.getAttribLocation(pathProg, 'aPrev'), curr: gl.getAttribLocation(pathProg, 'aCurr'), next: gl.getAttribLocation(pathProg, 'aNext'), side: gl.getAttribLocation(pathProg, 'aSide'), col: gl.getAttribLocation(pathProg, 'aCol'), m: gl.getUniformLocation(pathProg, 'uM'), res: gl.getUniformLocation(pathProg, 'uRes'), zoom: gl.getUniformLocation(pathProg, 'uZoom'), thick: gl.getUniformLocation(pathProg, 'uThickness') }, pbuf = gl.createBuffer(), cbuf2 = gl.createBuffer(), nbuf = gl.createBuffer(), sbuf = gl.createBuffer(), pcol = gl.createBuffer();
-    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); try { gl.lineWidth(3) } catch (e) { }
-    function v(x = 0, y = 0, z = 0) { return { x, y, z } } function add(a, b) { return v(a.x + b.x, a.y + b.y, a.z + b.z) } function sub(a, b) { return v(a.x - b.x, a.y - b.y, a.z - b.z) } function mul(a, s) { return v(a.x * s, a.y * s, a.z * s) } function norm(a) { let l = Math.hypot(a.x, a.y, a.z) || 1; return mul(a, 1 / l) } function basis() { let a = P.alpha, b = P.beta; return { axis: v(Math.sin(b) * Math.cos(a), Math.sin(b) * Math.sin(a), Math.cos(b)), lx: v(Math.cos(a) * Math.cos(b), Math.sin(a) * Math.cos(b), -Math.sin(b)), ly: v(-Math.sin(a), Math.cos(a), 0) } } function c2w(p) { let B = basis(); return add(add(mul(B.lx, p.x), mul(B.ly, p.y)), mul(B.axis, p.z)) } function rotMat() { let cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), cx = Math.cos(S.pitch), sx = Math.sin(S.pitch); return new Float32Array([cy, sx * sy, -cx * sy, 0, 0, cx, sx, 0, sy, -sx * cy, cx * cy, 0, 0, 0, 0, 1]) } function w2v(p) { let cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), x = cy * p.x + sy * p.z, z = -sy * p.x + cy * p.z, y = p.y, cx = Math.cos(S.pitch), sx = Math.sin(S.pitch); return { x, y: cx * y - sx * z, z: sx * y + cx * z } } function invView(q) { let cx = Math.cos(S.pitch), sx = Math.sin(S.pitch), cy = Math.cos(S.yaw), sy = Math.sin(S.yaw), y = cx * q.y + sx * q.z, z = -sx * q.y + cx * q.z, x = q.x; return v(cy * x - sy * z, y, sy * x + cy * z) } function projectW(p) { let q = w2v(p), dpr = canvas.width / innerWidth; return { x: innerWidth / 2 + q.x * S.zoom / dpr, y: innerHeight / 2 - q.y * S.zoom / dpr, z: q.z } }
-    function pad(n) { return String(n).padStart(2, '0') } function toInput(ms) { let d = new Date(ms); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) } function fromInput(s) { let t = new Date(s).getTime(); return Number.isFinite(t) ? t : S.ms }
-    dateTime.value = toInput(S.ms);
-    $('play').onclick = () => {
-        S.play = !S.play;
-        $('play').textContent = S.play ? 'pause' : 'resume'
-    };
-    $('reset').onclick = () => {
-        S.yaw = S.baseYaw = S.targetYaw = START.yaw;
-        S.pitch = S.basePitch = S.targetPitch = START.pitch;
-        S.zoom = fitZoom() * (canvas.width / innerWidth);
-    };
-    $('now').onclick = () => {
-        S.ms = Date.now();
-        dateTime.value = toInput(S.ms)
-    };
-    function commitDateTimeInput() {
-        S.ms = fromInput(dateTime.value);
-        dateTime.value = toInput(S.ms); 
-        readouts();
+    return Math.atan2(
+      yPoint.z - center.z,
+      xPoint.z - center.z,
+    );
+  }
+  function appendBillboardTriangle(
+    batch,
+    tipWorld,
+    previousWorld,
+    color,
+    sizePx = 13,
+  ) {
+    const tipView = worldToView(tipWorld);
+    const previousView = worldToView(previousWorld);
+    const direction = normalizeVec3(
+      vec3(
+        tipView.x - previousView.x,
+        tipView.y - previousView.y,
+        0,
+      ),
+    );
+    const normal = vec3(-direction.y, direction.x, 0);
+    const scale = sizePx * (canvas.width / innerWidth) / sceneState.zoom;
+    const billboardBase = vec3(
+      tipView.x - direction.x * scale,
+      tipView.y - direction.y * scale,
+      tipView.z,
+    );
+    const leftVertex = vec3(
+      billboardBase.x + normal.x * scale * .55,
+      billboardBase.y + normal.y * scale * .55,
+      tipView.z,
+    );
+    const rightVertex = vec3(
+      billboardBase.x - normal.x * scale * .55,
+      billboardBase.y - normal.y * scale * .55,
+      tipView.z,
+    );
+
+    appendTriangle(
+      batch,
+      viewToWorld(tipView),
+      viewToWorld(leftVertex),
+      viewToWorld(rightVertex),
+      color,
+    );
+  }
+  function appendCelestialArrow(
+    arrowBatch,
+    depth,
+    radius,
+    color,
+  ) {
+    const arrowAngle = frontFacingAngle(depth, radius) + Math.PI / 4;
+    const arrowRadius = radius + .14;
+    const arrowDepth = depth - renderParams.arrowDepthOffset;
+    const tailAngle = .45;
+
+    drawThickPath(
+      circlePoints(
+        arrowDepth,
+        arrowRadius,
+        80,
+        arrowAngle + .22,
+        arrowAngle - tailAngle,
+      ),
+      color,
+      false,
+      3.2,
+    );
+
+    const tipWorld = celestialToWorld(
+      vec3(
+        arrowRadius * Math.cos(arrowAngle - tailAngle),
+        arrowRadius * Math.sin(arrowAngle - tailAngle),
+        arrowDepth,
+      ),
+    );
+    const previousWorld = celestialToWorld(
+      vec3(
+        arrowRadius * Math.cos(arrowAngle - tailAngle + .035),
+        arrowRadius * Math.sin(arrowAngle - tailAngle + .035),
+        arrowDepth,
+      ),
+    );
+
+    appendBillboardTriangle(
+      arrowBatch,
+      tipWorld,
+      previousWorld,
+      color,
+      15,
+    );
+  }
+  function appendOcclusionSphere(batch) {
+    const starRadius = renderParams.starRadius * .993;
+    const latitudeSegments = 18;
+    const longitudeSegments = 40;
+    const minLatitude = -Math.PI / 2 + renderParams.latitudeMargin;
+    const maxLatitude = Math.PI / 2 - renderParams.latitudeMargin;
+
+    for (
+      let latitudeIndex = 0;
+      latitudeIndex < latitudeSegments;
+      latitudeIndex++
+    ) {
+      const latitudeStart = minLatitude +
+        latitudeIndex * (maxLatitude - minLatitude) / latitudeSegments;
+      const latitudeEnd = minLatitude +
+        (latitudeIndex + 1) * (maxLatitude - minLatitude) /
+          latitudeSegments;
+
+      for (
+        let longitudeIndex = 0;
+        longitudeIndex < longitudeSegments;
+        longitudeIndex++
+      ) {
+        const longitudeStart = longitudeIndex * FULL_TURN_RADIANS /
+          longitudeSegments;
+        const longitudeEnd = (longitudeIndex + 1) * FULL_TURN_RADIANS /
+          longitudeSegments;
+        const corner00 = celestialToWorld(
+          vec3(
+            starRadius * Math.cos(latitudeStart) * Math.cos(longitudeStart),
+            starRadius * Math.cos(latitudeStart) * Math.sin(longitudeStart),
+            starRadius * Math.sin(latitudeStart),
+          ),
+        );
+        const corner01 = celestialToWorld(
+          vec3(
+            starRadius * Math.cos(latitudeStart) * Math.cos(longitudeEnd),
+            starRadius * Math.cos(latitudeStart) * Math.sin(longitudeEnd),
+            starRadius * Math.sin(latitudeStart),
+          ),
+        );
+        const corner10 = celestialToWorld(
+          vec3(
+            starRadius * Math.cos(latitudeEnd) * Math.cos(longitudeStart),
+            starRadius * Math.cos(latitudeEnd) * Math.sin(longitudeStart),
+            starRadius * Math.sin(latitudeEnd),
+          ),
+        );
+        const corner11 = celestialToWorld(
+          vec3(
+            starRadius * Math.cos(latitudeEnd) * Math.cos(longitudeEnd),
+            starRadius * Math.cos(latitudeEnd) * Math.sin(longitudeEnd),
+            starRadius * Math.sin(latitudeEnd),
+          ),
+        );
+
+        appendTriangle(batch, corner00, corner10, corner01, palette.black);
+        appendTriangle(batch, corner01, corner10, corner11, palette.black);
+      }
     }
-    dateTime.oninput = () => {   
-        let t = new Date(dateTime.value).getTime();   
-        if (Number.isFinite(t)) S.ms = t;
+  }
+  function appendStarLoopArrow(arrowBatch, depth) {
+    const starRadius = renderParams.starRadius;
+    const radialRadius = Math.sqrt(
+      Math.max(0, starRadius * starRadius - depth * depth),
+    );
+    const arrowAngle = frontFacingAngle(depth, radialRadius) + Math.PI / 4;
+    const tipWorld = celestialToWorld(
+      vec3(
+        radialRadius * Math.cos(arrowAngle - .18),
+        radialRadius * Math.sin(arrowAngle - .18),
+        depth,
+      ),
+    );
+    const previousWorld = celestialToWorld(
+      vec3(
+        radialRadius * Math.cos(arrowAngle - .14),
+        radialRadius * Math.sin(arrowAngle - .14),
+        depth,
+      ),
+    );
+
+    appendBillboardTriangle(
+      arrowBatch,
+      tipWorld,
+      previousWorld,
+      palette.white,
+      11,
+    );
+  }
+  function celestialDepthDirection() {
+    return worldToView(celestialToWorld(vec3(0, 0, 1))).z -
+      worldToView(celestialToWorld(vec3(0, 0, 0))).z;
+  }
+  function allStarLoopDepths() {
+    const starRadius = renderParams.starRadius;
+    const minLatitude = -Math.PI / 2 + renderParams.latitudeMargin;
+    const maxLatitude = Math.PI / 2 - renderParams.latitudeMargin;
+    const depths = [];
+
+    for (let latitudeIndex = 0; latitudeIndex < 5; latitudeIndex++) {
+      const latitude = minLatitude +
+        (maxLatitude - minLatitude) * latitudeIndex / 4;
+      depths.push(starRadius * Math.sin(latitude));
+    }
+
+    return depths;
+  }
+  function visibleStarLoopDepths() {
+    const depths = allStarLoopDepths();
+    const cameraSide = celestialDepthDirection();
+
+    if (cameraSide > .32) return depths.slice(1);
+    if (cameraSide < -.32) return depths.slice(0, 4);
+    return depths;
+  }
+  function drawStarLoops(arrowBatch, includeHeads = true) {
+    const starRadius = renderParams.starRadius;
+
+    for (const depth of visibleStarLoopDepths()) {
+      const radialRadius = Math.sqrt(
+        Math.max(0, starRadius * starRadius - depth * depth),
+      );
+      drawThickPath(
+        circlePoints(depth, radialRadius, 420),
+        palette.white,
+        true,
+        2.8,
+      );
+      if (includeHeads) appendStarLoopArrow(arrowBatch, depth);
+    }
+  }
+  function appendStarLoopHeads(arrowBatch) {
+    for (const depth of visibleStarLoopDepths()) {
+      appendStarLoopArrow(arrowBatch, depth);
+    }
+  }
+  function appendStarDots(starDotBatch) {
+    const starRadius = renderParams.starRadius;
+
+    for (let dotIndex = 0; dotIndex < 96; dotIndex += 2) {
+      const angle = dotIndex * FULL_TURN_RADIANS / 96;
+      appendVertex(
+        starDotBatch,
+        viewToWorld(
+          vec3(
+            starRadius * Math.cos(angle),
+            starRadius * Math.sin(angle),
+            0,
+          ),
+        ),
+        palette.white,
+      );
+    }
+  }
+  function targetEarthScreenRadius() {
+    const devicePixelRatio = canvas.width / innerWidth;
+    const earthScale = renderParams.rayTargetScale || 1;
+
+    return Math.max(
+      1,
+      renderParams.earthRadius * earthScale * sceneState.zoom *
+        sceneState.zoomMultiplier / devicePixelRatio,
+    );
+  }
+  function celestialRayScreenInfo(celestialBody) {
+    const isSun = celestialBody === "sun";
+    const innerRadius = isSun
+      ? renderParams.sunInnerRadius
+      : renderParams.moonInnerRadius;
+    const outerRadius = isSun
+      ? renderParams.sunOuterRadius
+      : renderParams.moonOuterRadius;
+    const depth = isSun ? sunDepth(0) : moonDepth(0);
+    const color = isSun ? palette.sun : palette.moon;
+    const idealAngle = isSun ? renderParams.sunAngle : renderParams.moonAngle;
+    const phaseOffset = -(
+      localDayFraction() * FULL_TURN_RADIANS +
+      (isSun ? 0 : lunarCycleAngle())
+    );
+    const angle = idealAngle + phaseOffset;
+    const sourcePoint = celestialToWorld(
+      vec3(
+        innerRadius * Math.cos(angle),
+        innerRadius * Math.sin(angle),
+        depth,
+      ),
+    );
+    const outerPoint = celestialToWorld(
+      vec3(
+        outerRadius * Math.cos(angle),
+        outerRadius * Math.sin(angle),
+        depth,
+      ),
+    );
+    const centerScreen = projectWorldToScreen(
+      celestialToWorld(vec3(0, 0, depth)),
+    );
+    const earthScreen = projectWorldToScreen(vec3(0, 0, 0));
+    const sourceScreen = projectWorldToScreen(sourcePoint);
+    const outerScreen = projectWorldToScreen(outerPoint);
+    const baseAngle = Math.atan2(
+      sourceScreen.y - earthScreen.y,
+      sourceScreen.x - earthScreen.x,
+    );
+
+    return {
+      isSun,
+      sourcePoint,
+      earthScreen,
+      sourceScreen,
+      outerScreen,
+      centerScreen,
+      baseAngle,
+      color,
     };
-    dateTime.onchange = commitDateTimeInput;
-    dateTime.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            e.preventDefault();        
-            commitDateTimeInput();        
-            dateTime.blur();    
-        }
+  }
+  function screenToWorldAtEarthDepth(screenX, screenY) {
+    const devicePixelRatio = canvas.width / innerWidth;
+    const earthViewDepth = worldToView(vec3(0, 0, 0)).z;
+    const zoom = sceneState.zoom * sceneState.zoomMultiplier;
+
+    return viewToWorld(
+      vec3(
+        (screenX - innerWidth / 2) * devicePixelRatio / zoom,
+        (innerHeight / 2 - screenY) * devicePixelRatio / zoom,
+        earthViewDepth,
+      ),
+    );
+  }
+  function meanAngle(firstAngle, secondAngle) {
+    return Math.atan2(
+      Math.sin(firstAngle) + Math.sin(secondAngle),
+      Math.cos(firstAngle) + Math.cos(secondAngle),
+    );
+  }
+  function positionEarthLabel() {
+    const sunRay = celestialRayScreenInfo("sun");
+    const moonRay = celestialRayScreenInfo("moon");
+    const earthScreenRadius = targetEarthScreenRadius();
+    const oppositeAngle = meanAngle(
+      sunRay.baseAngle,
+      moonRay.baseAngle,
+    ) + Math.PI;
+
+    return {
+      x: sunRay.earthScreen.x +
+        Math.cos(oppositeAngle) * (earthScreenRadius + 20),
+      y: sunRay.earthScreen.y +
+        Math.sin(oppositeAngle) * (earthScreenRadius + 20),
+      z: sunRay.earthScreen.z,
+    };
+  }
+  function positionBodyLabel(celestialBody) {
+    const ray = celestialRayScreenInfo(celestialBody);
+    const horizontalOffset = ray.outerScreen.x - ray.centerScreen.x;
+    const verticalOffset = ray.outerScreen.y - ray.centerScreen.y;
+    const screenDistance = Math.hypot(horizontalOffset, verticalOffset) || 1;
+
+    return {
+      x: ray.outerScreen.x + horizontalOffset / screenDistance * 48,
+      y: ray.outerScreen.y + verticalOffset / screenDistance * 48,
+      z: ray.outerScreen.z,
+    };
+  }
+  function positionStarsLabel() {
+    const starTopPoint = projectWorldToScreen(
+      viewToWorld(vec3(0, renderParams.starRadius, 0)),
+    );
+    return {
+      x: starTopPoint.x,
+      y: starTopPoint.y - 22,
+      z: starTopPoint.z,
+    };
+  }
+  function appendCelestialRays(batch) {
+    const earthScreenRadius = targetEarthScreenRadius();
+    const rayCount = 5;
+
+    for (const celestialBody of ["sun", "moon"]) {
+      const ray = celestialRayScreenInfo(celestialBody);
+      const angularSpread = (ray.isSun ? 62 : 84) * Math.PI / 180;
+
+      for (let rayIndex = 0; rayIndex < rayCount; rayIndex++) {
+        const rayFraction = rayCount === 1 ? .5 : rayIndex / (rayCount - 1);
+        const rayAngle = ray.baseAngle + (-.5 + rayFraction) * angularSpread;
+        const targetScreenX = ray.earthScreen.x +
+          Math.cos(rayAngle) * earthScreenRadius;
+        const targetScreenY = ray.earthScreen.y +
+          Math.sin(rayAngle) * earthScreenRadius;
+        const targetWorld = screenToWorldAtEarthDepth(
+          targetScreenX,
+          targetScreenY,
+        );
+
+        appendLine(batch, ray.sourcePoint, targetWorld, ray.color);
+      }
+    }
+  }
+  function appendEarthGeometry(batch, earthScale = 1) {
+    const segmentCount = 72;
+    const radius = renderParams.earthRadius * earthScale;
+    const halfHeight = renderParams.earthHalfHeight * earthScale;
+
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      const startAngle = segmentIndex * FULL_TURN_RADIANS / segmentCount;
+      const endAngle = (segmentIndex + 1) * FULL_TURN_RADIANS / segmentCount;
+      const lowerStart = vec3(
+        radius * Math.cos(startAngle),
+        -halfHeight,
+        radius * Math.sin(startAngle),
+      );
+      const lowerEnd = vec3(
+        radius * Math.cos(endAngle),
+        -halfHeight,
+        radius * Math.sin(endAngle),
+      );
+      const upperStart = vec3(
+        radius * Math.cos(startAngle),
+        halfHeight,
+        radius * Math.sin(startAngle),
+      );
+      const upperEnd = vec3(
+        radius * Math.cos(endAngle),
+        halfHeight,
+        radius * Math.sin(endAngle),
+      );
+
+      appendTriangle(batch, lowerStart, lowerEnd, upperStart, palette.white);
+      appendTriangle(batch, upperStart, lowerEnd, upperEnd, palette.white);
+      appendTriangle(
+        batch,
+        vec3(0, halfHeight, 0),
+        upperStart,
+        upperEnd,
+        palette.white,
+      );
+      appendTriangle(
+        batch,
+        vec3(0, -halfHeight, 0),
+        lowerEnd,
+        lowerStart,
+        palette.white,
+      );
+    }
+  }
+  function drawGeometryBatch(primitive, batch, pointSize = 3.5) {
+    if (!batch.positions.length) return;
+
+    gl.uniform1f(sceneLocations.pointSize, pointSize);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array(batch.positions),
+      gl.STREAM_DRAW,
+    );
+    gl.vertexAttribPointer(
+      sceneLocations.position,
+      3,
+      gl.FLOAT,
+      false,
+      0,
+      0,
+    );
+    gl.enableVertexAttribArray(sceneLocations.position);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array(batch.colors),
+      gl.STREAM_DRAW,
+    );
+    gl.vertexAttribPointer(sceneLocations.color, 4, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(sceneLocations.color);
+    gl.drawArrays(primitive, 0, batch.positions.length / 3);
+  }
+  function drawScene({
+    earthScale = 1,
+    earthOnTop = false,
+    zoomMultiplier = 1,
+    whiteBackground = false,
+  } = {}) {
+    sceneState.zoomMultiplier = zoomMultiplier;
+    gl.useProgram(sceneProgram);
+    gl.uniformMatrix4fv(sceneLocations.modelMatrix, false, rotationMatrix());
+    gl.uniform2f(sceneLocations.resolution, canvas.width, canvas.height);
+    gl.uniform1f(sceneLocations.zoom, sceneState.zoom * zoomMultiplier);
+    gl.clearColor(
+      whiteBackground ? 1 : 0,
+      whiteBackground ? 1 : 0,
+      whiteBackground ? 1 : 0,
+      1,
+    );
+    gl.clearDepth(1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (whiteBackground) return;
+
+    const occlusionGeometry = { positions: [], colors: [] },
+      ringGeometry = { positions: [], colors: [] },
+      arrowGeometry = { positions: [], colors: [] };
+
+    appendOcclusionSphere(occlusionGeometry);
+    drawGeometryBatch(gl.TRIANGLES, occlusionGeometry);
+    drawStarLoops(arrowGeometry, false);
+    drawThickPath(
+      [
+        celestialToWorld(vec3(0, 0, -5.5)),
+        celestialToWorld(vec3(0, 0, 5.5)),
+      ],
+      palette.white,
+      false,
+      3.8,
+    );
+    appendRingOcclusion(
+      ringGeometry,
+      sunDepth(0),
+      renderParams.sunOuterRadius,
+      renderParams.sunInnerRadius,
+    );
+    appendRingOcclusion(
+      ringGeometry,
+      moonDepth(0),
+      renderParams.moonOuterRadius,
+      renderParams.moonInnerRadius,
+    );
+    drawGeometryBatch(gl.TRIANGLES, ringGeometry);
+    drawRingLines(
+      sunDepth(0),
+      renderParams.sunOuterRadius,
+      renderParams.sunInnerRadius,
+      palette.sun,
+    );
+    drawRingLines(
+      moonDepth(0),
+      renderParams.moonOuterRadius,
+      renderParams.moonInnerRadius,
+      palette.moon,
+    );
+    appendCelestialArrow(
+      arrowGeometry,
+      sunDepth(0),
+      renderParams.sunOuterRadius,
+      palette.sun,
+    );
+    appendCelestialArrow(
+      arrowGeometry,
+      moonDepth(0),
+      renderParams.moonOuterRadius,
+      palette.moon,
+    );
+    drawGeometryBatch(gl.TRIANGLES, arrowGeometry);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+
+    const ringDepthGeometry = { positions: [], colors: [] };
+    appendRingOcclusion(
+      ringDepthGeometry,
+      sunDepth(0),
+      renderParams.sunOuterRadius,
+      renderParams.sunInnerRadius,
+    );
+    appendRingOcclusion(
+      ringDepthGeometry,
+      moonDepth(0),
+      renderParams.moonOuterRadius,
+      renderParams.moonInnerRadius,
+    );
+    gl.colorMask(false, false, false, false);
+    drawGeometryBatch(gl.TRIANGLES, ringDepthGeometry);
+    gl.colorMask(true, true, true, true);
+
+    const rayGeometry = { positions: [], colors: [] },
+      arrowHeadGeometry = { positions: [], colors: [] },
+      starDotGeometry = { positions: [], colors: [] };
+    appendCelestialRays(rayGeometry);
+    appendStarLoopHeads(arrowHeadGeometry);
+    drawGeometryBatch(gl.TRIANGLES, arrowHeadGeometry);
+    drawGeometryBatch(gl.LINES, rayGeometry);
+    appendStarDots(starDotGeometry);
+    drawGeometryBatch(gl.POINTS, starDotGeometry, 3.8);
+
+    const earthGeometry = { positions: [], colors: [] };
+    appendEarthGeometry(earthGeometry, earthScale);
+    if (earthOnTop) gl.clear(gl.DEPTH_BUFFER_BIT);
+    drawGeometryBatch(gl.TRIANGLES, earthGeometry);
+  }
+
+  function easeInOut(progress) {
+    const clampedProgress = Math.max(0, Math.min(1, progress));
+    return clampedProgress < .5
+      ? 2 * clampedProgress * clampedProgress
+      : 1 - Math.pow(-2 * clampedProgress + 2, 2) / 2;
+  }
+  function transitionProgress(nowMs) {
+    return Math.max(
+      0,
+      Math.min(
+        1,
+        (nowMs - pageTransition.startedAtMs) / pageTransition.durationMs,
+      ),
+    );
+  }
+  function positionLabel(element, screenPosition) {
+    element.style.left = screenPosition.x + "px";
+    element.style.top = screenPosition.y + "px";
+  }
+  function updateLabelPositions() {
+    const labelPositions = {
+      sun: positionBodyLabel("sun"),
+      moon: positionBodyLabel("moon"),
+      earth: positionEarthLabel(),
+      stars: positionStarsLabel(),
+      N: projectWorldToScreen(celestialToWorld(vec3(0, 0, 5.65))),
+      S: projectWorldToScreen(celestialToWorld(vec3(0, 0, -5.65))),
+    };
+
+    for (const labelName in labelPositions) {
+      positionLabel(labels[labelName], labelPositions[labelName]);
+    }
+    for (const labelName in labels) {
+      labels[labelName].classList.toggle(
+        "hidden",
+        pageTransition.phase !== "home",
+      );
+    }
+  }
+  function wrapUnitInterval(value) {
+    return ((value % 1) + 1) % 1;
+  }
+
+  function heavensMood() {
+    const sunDaily = wrapUnitInterval(localDayFraction());
+    const moonDaily = wrapUnitInterval(
+      localDayFraction() + lunarCycleAngle() / FULL_TURN_RADIANS,
+    );
+    const season = wrapUnitInterval(
+      solarSeasonAngle() / FULL_TURN_RADIANS,
+    );
+    const phase = wrapUnitInterval(
+      lunarCycleAngle() / FULL_TURN_RADIANS,
+    );
+
+    const agreement = Math.cos(FULL_TURN_RADIANS * (sunDaily - moonDaily));
+    const warmth = Math.sin(FULL_TURN_RADIANS * season);
+    const fullness = Math.cos(FULL_TURN_RADIANS * (phase - .5));
+    const threshold = Math.cos(FULL_TURN_RADIANS * (sunDaily - .25));
+
+    const omen = agreement * 1.25 +
+      warmth * 1.1 +
+      fullness * .85 +
+      threshold * .65;
+
+    if (omen > 2.25) return "the heavens are radiant";
+    if (omen > 1.25) return "the heavens are happy";
+    if (omen > .35) return "the heavens are pleased";
+    if (omen > -.35) return "the heavens are inscrutable";
+    if (omen > -1.25) return "the heavens are wistful";
+    if (omen > -2.25) return "the heavens are sad";
+    return "the heavens are inconsolable";
+  }
+
+  function updateReadouts() {
+    const mood = heavensMood();
+
+    getElement("datev").textContent = new Date(
+      sceneState.timeMs,
+    ).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
     });
-    speed.oninput = () => S.speed = +speed.value;
-    
-    modeToggle.onclick = () => { S.interactive = !S.interactive; uiPanel.classList.toggle('show', S.interactive); siteOverlay.classList.toggle('interactiveHidden', S.interactive); modeToggle.textContent = S.interactive ? 'shun' : 'interact'; drag = null; S.baseYaw = S.yaw; S.basePitch = S.pitch; S.targetYaw = S.yaw; S.targetPitch = S.pitch };
-    const COPY = window.ANCHORCELL_CONTENT || {},
-        CURRENT_PAGE = window.ANCHORCELL_PAGE || {},
-        ROUTES = { news: '/news/', shows: '/shows/', music: '/music/', videos: '/videos/' },
-        PAGE = { mode: 'home', section: null, page: null, t0: 0, duration: 950 };
 
-    function isNewsPath(pathname) {
-        return pathname === '/news/' || /^\/news\/page\d+\/?$/.test(pathname);
+    getElement("speedv").textContent = sceneState.timeScale.toFixed(0) + "×";
+    getElement("heavensReadout").textContent = mood;
+  }
+  function renderFrame() {
+    const nowMs = performance.now();
+    const deltaSeconds = (nowMs - sceneState.previousFrameTime) / 1000;
+    sceneState.previousFrameTime = nowMs;
+
+    if (!sceneState.isInteractive) {
+      const settleFactor = 1 - Math.exp(-deltaSeconds * 5.5);
+      sceneState.yaw += (sceneState.targetYaw - sceneState.yaw) * settleFactor;
+      sceneState.pitch += (sceneState.targetPitch - sceneState.pitch) *
+        settleFactor;
     }
-    async function fetchRenderedPage(url) {
-        const res = await fetch(url);
-
-        if (!res.ok) {
-            throw new Error('Could not load ' + url);
-        }
-
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-
-        const root = doc.querySelector('.staticFallbackPage') || doc;
-        const title = root.querySelector('.pageTitle');
-        const kicker = root.querySelector('#pageKicker, .pageKicker');
-        const body = root.querySelector('.pageBody');
-        const back = root.querySelector('.pageBack');
-
-        if (!body) {
-            throw new Error('No page body found in ' + url);
-        }
-
-        return {
-            type: 'fetched',
-            key: url,
-            title: title ? title.textContent.trim() : 'news',
-            kicker: kicker ? kicker.textContent.trim() : 'anchorcell / news',
-            backUrl: back ? back.getAttribute('href') || '/' : '/',
-            backLabel: back ? back.textContent.trim() || 'Back' : 'Back',
-            body: body.innerHTML
-        };
+    if (sceneState.isPlaying) {
+      sceneState.timeMs += deltaSeconds * 1000 * sceneState.timeScale;
+      if (
+        nowMs - sceneState.lastReadoutAt > 500 &&
+        document.activeElement !== dateTimeInput
+      ) {
+        dateTimeInput.value = formatDateTimeInput(sceneState.timeMs);
+      }
+    }
+    if (nowMs - sceneState.lastReadoutAt > 500) {
+      updateReadouts();
+      sceneState.lastReadoutAt = nowMs;
     }
 
-    function cleanPath(path) {
-        return (path || '/')
-            .replace(location.origin, '')
-            .replace(/[#?].*$/, '')
-            .replace(/^\//, '')
-            .replace(/\/$/, '');
+    if (pageTransition.phase === "home") {
+      drawScene({ earthOnTop: sceneState.earthOnTop });
+      updateLabelPositions();
+    } else if (pageTransition.phase === "entering") {
+      const transitionAmount = transitionProgress(nowMs);
+      const easedProgress = easeInOut(transitionAmount);
+      const whiteBackground = transitionAmount > .56;
+
+      drawScene({
+        earthScale: 1 + easedProgress * 170,
+        earthOnTop: true,
+        zoomMultiplier: 1 + easedProgress * 8,
+        whiteBackground,
+      });
+      updateLabelPositions();
+      if (transitionAmount > .58) {
+        setPageOverlayVisible(true);
+      }
+      if (transitionAmount >= .82) {
+        pageTransition.phase = "open";
+        setPageOverlayVisible(true);
+      }
+    } else if (pageTransition.phase === "open") {
+      drawScene({
+        earthOnTop: true,
+        zoomMultiplier: 8,
+        whiteBackground: true,
+      });
+    } else if (pageTransition.phase === "leaving") {
+      const transitionAmount = transitionProgress(nowMs);
+      const easedProgress = easeInOut(1 - transitionAmount);
+
+      drawScene({
+        earthScale: 1 + easedProgress * 170,
+        earthOnTop: true,
+        zoomMultiplier: 1 + easedProgress * 8,
+        whiteBackground: transitionAmount < .16,
+      });
+      if (transitionAmount >= 1) {
+        sceneState.earthOnTop = false;
+        pageTransition.phase = "home";
+        setSiteOverlayVisible(true);
+        setModeToggleVisible(true);
+        setPageOverlayVisible(false);
+        restorePageFocus();
+      }
     }
+    requestAnimationFrame(renderFrame);
+  }
 
-    function sectionFromPath(path) {
-        let s = cleanPath(path);
-        return ROUTES[s] ? s : null;
-    }
+  const initialPage = pageDataForLocation();
 
-    function currentPageMatchesLocation() {
-        return !CURRENT_PAGE.isHome &&
-            cleanPath(CURRENT_PAGE.url) === cleanPath(location.pathname);
-    }
+  if (initialPage) {
+    pageTransition.phase = "open";
+    sceneState.earthOnTop = true;
+    setPage(initialPage);
+    setPageOverlayVisible(true, { focus: false });
+    setSiteOverlayVisible(false);
+    setModeToggleVisible(false);
+  }
 
-    function sectionPageData(s) {
-        return {
-            type: 'section',
-            key: s,
-            title: s,
-            kicker: 'anchorcell / ' + s,
-            backUrl: '/',
-            backLabel: 'Back',
-            body: COPY[s] || '<p>More soon.</p>'
-        };
-    }
-
-    function currentPageData() {
-        let section = sectionFromPath(location.pathname);
-
-        if (section) {
-            return sectionPageData(section);
-        }
-
-        if (currentPageMatchesLocation()) {
-            return {
-                type: 'page',
-                key: CURRENT_PAGE.url,
-                title: CURRENT_PAGE.title || document.title.replace(/\s*\/.*$/, ''),
-                kicker: CURRENT_PAGE.kicker || CURRENT_PAGE.title || 'anchorcell',
-                backUrl: CURRENT_PAGE.backUrl || '/',
-                backLabel: CURRENT_PAGE.backLabel || 'Back',
-                body: CURRENT_PAGE.body || '<p>More soon.</p>'
-            };
-        }
-
-        return null;
-    }
-
-    const SITE_TITLE = 'anchorcell';
-
-    function setDocumentTitle(data) {
-        const title = data && data.title
-            ? String(data.title).trim()
-            : '';
-
-        if (!title || title.toLowerCase() === SITE_TITLE.toLowerCase()) {
-            document.title = SITE_TITLE;
-        } else {
-            document.title = title + ' / ' + SITE_TITLE;
-        }
-    }
-
-    function setHomeDocumentTitle() {
-        document.title = SITE_TITLE;
-    }
-
-    function setPage(dataOrKey) {
-        let data = typeof dataOrKey === 'string'
-            ? sectionPageData(dataOrKey)
-            : dataOrKey;
-
-        if (!data) return;
-
-        PAGE.page = data;
-        PAGE.section = data.type === 'section' ? data.key : null;
-
-        setDocumentTitle(data);
-
-        pageTitle.textContent = (data.title || '').toLowerCase();
-        pageKicker.textContent = data.kicker || 'anchorcell';
-        pageBack.textContent = data.backLabel || 'Back';
-        pageBack.dataset.backUrl = data.backUrl || '/';
-
-        let c = data.body;
-        pageBody.innerHTML = Array.isArray(c)
-            ? c.map(x => '<p>' + x + '</p>').join('')
-            : (c || '<p>More soon.</p>');
-    }
-
-    async function startPage(s, opts = {}) {
-        if (PAGE.mode !== 'home' && !opts.force) return;
-
-        let data;
-
-        if (s === 'news') {
-            try {
-                data = await fetchRenderedPage(ROUTES.news);
-            } catch (err) {
-                if (!opts.noHistory) {
-                    location.href = ROUTES.news;
-                }
-                return;
-            }
-        } else {
-            if (!COPY[s]) return;
-            data = sectionPageData(s);
-        }
-
-        if (!opts.noHistory) {
-            history.pushState({ section: s }, '', ROUTES[s] || ('/' + s + '/'));
-        }
-
-        S.topEarth = true;
-        PAGE.mode = 'in';
-        PAGE.t0 = performance.now();
-
-        setPage(data);
-
-        siteOverlay.classList.add('faded');
-        modeToggle.style.opacity = 0;
-    }
-
-    function closePage(opts = {}) {
-        if (PAGE.mode !== 'page') return;
-
-        let backUrl = (PAGE.page && PAGE.page.backUrl) || '/';
-
-        // Posts should go back to /news/, not animate to homepage.
-        if (backUrl !== '/' && !opts.noHistory) {
-            location.href = backUrl;
-            return;
-        }
-
-        // Section overlays still animate back to home.
-        if (!opts.noHistory) {
-            history.pushState({ section: 'home' }, '', '/');
-        }
-
-        setHomeDocumentTitle();
-
-        PAGE.mode = 'out';
-        PAGE.t0 = performance.now();
-        pageOverlay.classList.remove('show');
-    }
-
-    function sectionFromLocation() {
-        let h = location.hash.replace('#', '').replace(/^\//, '').replace(/\/$/, '');
-
-        if (h && ROUTES[h]) {
-            history.replaceState({ section: h }, '', ROUTES[h]);
-            return h;
-        }
-
-        return sectionFromPath(location.pathname);
-    }
-    siteOverlay.querySelectorAll('nav a').forEach(a => a.onclick = e => { let url = new URL(a.href, location.origin), s = url.pathname.replace(/^\//, '').replace(/\/$/, ''); if (ROUTES[s]) { e.preventDefault(); startPage(s) } });
-    pageBack.onclick = () => closePage();
-    addEventListener('popstate', () => {
-        let data = currentPageData();
-
-        if (data) {
-            PAGE.mode = 'page';
-            setPage(data);
-            pageOverlay.classList.add('show');
-            siteOverlay.classList.add('faded');
-            modeToggle.style.opacity = 0;
-        } else if (PAGE.mode === 'page') {
-            closePage({ noHistory: true });
-        }
-    });
-    function fitZoom() { return START.zoom * (innerHeight / START.h) } function resize() { let dpr = Math.max(1, Math.min(1.5, devicePixelRatio || 1)); canvas.width = Math.floor(innerWidth * dpr); canvas.height = Math.floor(innerHeight * dpr); gl.viewport(0, 0, canvas.width, canvas.height); S.zoom = fitZoom() * dpr } addEventListener('resize', resize); resize(); let drag = null; function ambient(x, y) { let nx = (x / innerWidth - .5) * 2, ny = (y / innerHeight - .5) * 2; S.targetYaw = S.baseYaw + nx * .085; S.targetPitch = Math.max(-1.5, Math.min(1.5, S.basePitch - ny * .065)) } canvas.onpointerdown = e => { if (S.interactive) { drag = { x: e.clientX, y: e.clientY, yaw: S.yaw, pitch: S.pitch }; canvas.setPointerCapture(e.pointerId) } else ambient(e.clientX, e.clientY) }; canvas.onpointermove = e => { if (S.interactive && drag) { S.yaw = drag.yaw + (e.clientX - drag.x) * .008; S.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch + (e.clientY - drag.y) * .008)); S.baseYaw = S.yaw; S.basePitch = S.pitch } else if (!S.interactive && e.pointerType === 'mouse') ambient(e.clientX, e.clientY) }; addEventListener('pointermove', e => { if (!S.interactive && e.pointerType === 'mouse') ambient(e.clientX, e.clientY) }, { passive: true }); canvas.onpointerup = () => drag = null; canvas.onpointercancel = () => drag = null; canvas.onwheel = e => { if (!S.interactive) return; e.preventDefault(); S.zoom *= Math.exp(-e.deltaY * .001); S.zoom = Math.max(34, Math.min(260, S.zoom)) };
-    function mday() { return S.ms / MSD } function day() { let d = new Date(S.ms); return (d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600 + d.getMilliseconds() / 36e5) / 24 } function yang() { let y = new Date(S.ms).getFullYear(), eq = new Date(y, 2, 20, 12).getTime(); return TAU * ((S.ms - eq) / MSD) / YR } function mang() { let e = Date.UTC(2000, 0, 6, 18, 14); return TAU * ((S.ms - e) / MSD / LM) } function sdec() { return P.obl * Math.sin(yang()) } function mdec() { let ma = mang(), node = TAU * ((mday() - 10957) / 6798); return P.obl * Math.sin(yang() + ma) + P.linc * Math.sin(ma - node) } function dz(d) { return P.declScale * d / P.obl } function sz(z) { return z + dz(sdec()) } function mz(z) { return z + dz(mdec()) }
-    function push(A, p, c) { A.p.push(p.x, p.y, p.z); A.c.push(c[0], c[1], c[2], c[3]) } function line(A, a, b, c) { push(A, a, c); push(A, b, c) } function tri(A, a, b, c, col) { push(A, a, col); push(A, b, col); push(A, c, col) } function annulus(A, z, o, i, col, n = 300, a0 = 0, a1 = TAU) { for (let k = 0; k < n; k++) { let a = a0 + (a1 - a0) * k / n, b = a0 + (a1 - a0) * (k + 1) / n, p0 = c2w(v(o * Math.cos(a), o * Math.sin(a), z)), p1 = c2w(v(i * Math.cos(a), i * Math.sin(a), z)), p2 = c2w(v(o * Math.cos(b), o * Math.sin(b), z)), p3 = c2w(v(i * Math.cos(b), i * Math.sin(b), z)); tri(A, p0, p1, p2, col); tri(A, p2, p1, p3, col) } } function side(A, z0, z1, r, col, n = 180) { for (let k = 0; k < n; k++) { let a = k * TAU / n, b = (k + 1) * TAU / n, p0 = c2w(v(r * Math.cos(a), r * Math.sin(a), z0)), p1 = c2w(v(r * Math.cos(b), r * Math.sin(b), z0)), p2 = c2w(v(r * Math.cos(a), r * Math.sin(a), z1)), p3 = c2w(v(r * Math.cos(b), r * Math.sin(b), z1)); tri(A, p0, p1, p2, col); tri(A, p2, p1, p3, col) } } function ringOcc(A, z, o, i) { annulus(A, z - P.thick, o, i, C.b); annulus(A, z + P.thick, o, i, C.b); side(A, z - P.thick, z + P.thick, o, C.b); side(A, z - P.thick, z + P.thick, i, C.b) } function circlePts(z, r, n = 360, a0 = 0, a1 = TAU) { let pts = []; for (let k = 0; k < n; k++) { let a = a0 + (a1 - a0) * k / n; pts.push(c2w(v(r * Math.cos(a), r * Math.sin(a), z))) } return pts } function drawPath(pts, col, closed = true, px = 3.5) { if (pts.length < 2) return; let prev = [], curr = [], next = [], side = [], colors = []; let N = pts.length, seg = closed ? N : N - 1; for (let i = 0; i < seg; i++) { let i0 = i, i1 = (i + 1) % N, quad = [[i0, -1], [i0, 1], [i1, -1], [i1, -1], [i0, 1], [i1, 1]]; for (let [idx, s] of quad) { let p = pts[(idx - 1 + N) % N], c = pts[idx], n = pts[(idx + 1) % N]; if (!closed) { if (idx === 0) p = add(c, sub(c, n)); if (idx === N - 1) n = add(c, sub(c, p)) } prev.push(p.x, p.y, p.z); curr.push(c.x, c.y, c.z); next.push(n.x, n.y, n.z); side.push(s); colors.push(col[0], col[1], col[2], col[3]) } } gl.useProgram(pathProg); gl.uniformMatrix4fv(ploc.m, false, rotMat()); gl.uniform2f(ploc.res, canvas.width, canvas.height); gl.uniform1f(ploc.zoom, S.zoom * S.zm); gl.uniform1f(ploc.thick, px); function attr(buf, locn, data, n) { gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STREAM_DRAW); gl.vertexAttribPointer(locn, n, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(locn) } attr(pbuf, ploc.prev, prev, 3); attr(cbuf2, ploc.curr, curr, 3); attr(nbuf, ploc.next, next, 3); attr(sbuf, ploc.side, side, 1); attr(pcol, ploc.col, colors, 4); gl.drawArrays(gl.TRIANGLES, 0, curr.length / 3); gl.useProgram(prog) } function ringLines(z, o, i, col) { drawPath(circlePts(z - P.thick - .008, o, 420), col, true, 3.8); drawPath(circlePts(z - P.thick - .008, i, 420), col, true, 3.8); drawPath(circlePts(z + P.thick + .008, o, 420), C.w, true, 3.8); drawPath(circlePts(z + P.thick + .008, i, 420), C.w, true, 3.8) } function frontA(z, r) { let c = w2v(c2w(v(0, 0, z))), x = w2v(c2w(v(r, 0, z))), y = w2v(c2w(v(0, r, z))); return Math.atan2(y.z - c.z, x.z - c.z) } function screenBillboardTri(A, tip, prev, col, size = 13) { let q = w2v(tip), pq = w2v(prev), d = norm(v(q.x - pq.x, q.y - pq.y, 0)), n = v(-d.y, d.x, 0), s = size * (canvas.width / innerWidth) / S.zoom, bv = v(q.x - d.x * s, q.y - d.y * s, q.z), l = v(bv.x + n.x * s * .55, bv.y + n.y * s * .55, q.z), r = v(bv.x - n.x * s * .55, bv.y - n.y * s * .55, q.z); tri(A, invView(q), invView(l), invView(r), col) } function arrow(T, z, r, col) { let a = frontA(z, r) + Math.PI / 4, rr = r + .14, zz = z - P.arrowZ, tail = .45; drawPath(circlePts(zz, rr, 80, a + .22, a - tail), col, false, 3.2); let tip = c2w(v(rr * Math.cos(a - tail), rr * Math.sin(a - tail), zz)), prev = c2w(v(rr * Math.cos(a - tail + .035), rr * Math.sin(a - tail + .035), zz)); screenBillboardTri(T, tip, prev, col, 15) }
-    function sphereOcc(A) {
-        let R = P.starR * .993, lat = 18, lon = 40, lo = -Math.PI / 2 + P.bread, hi = Math.PI / 2 - P.bread;
-        for (let i = 0; i < lat; i++) {
-            let p0 = lo + i * (hi - lo) / lat, p1 = lo + (i + 1) * (hi - lo) / lat;
-            for (let j = 0; j < lon; j++) {
-                let a = j * TAU / lon, b = (j + 1) * TAU / lon, q00 = c2w(v(R * Math.cos(p0) * Math.cos(a), R * Math.cos(p0) * Math.sin(a), R * Math.sin(p0))), q01 = c2w(v(R * Math.cos(p0) * Math.cos(b), R * Math.cos(p0) * Math.sin(b), R * Math.sin(p0))), q10 = c2w(v(R * Math.cos(p1) * Math.cos(a), R * Math.cos(p1) * Math.sin(a), R * Math.sin(p1))), q11 = c2w(v(R * Math.cos(p1) * Math.cos(b), R * Math.cos(p1) * Math.sin(b), R * Math.sin(p1)));
-                tri(A, q00, q10, q01, C.b); tri(A, q01, q10, q11, C.b)
-            }
-        }
-    }
-    function loopArrow(T, q) { let R = P.starR, rr = Math.sqrt(Math.max(0, R * R - q * q)), a = frontA(q, rr) + Math.PI / 4, tip = c2w(v(rr * Math.cos(a - .18), rr * Math.sin(a - .18), q)), prev = c2w(v(rr * Math.cos(a - .14), rr * Math.sin(a - .14), q)); screenBillboardTri(T, tip, prev, C.w, 11) } function cameraCelestialSide() { return w2v(c2w(v(0, 0, 1))).z - w2v(c2w(v(0, 0, 0))).z } function allStarQs() { let R = P.starR, lo = -Math.PI / 2 + P.bread, hi = Math.PI / 2 - P.bread, qs = []; for (let i = 0; i < 5; i++) { let phi = lo + (hi - lo) * i / 4; qs.push(R * Math.sin(phi)) } return qs } function visibleStarQs() { let qs = allStarQs(), side = cameraCelestialSide(); if (side > .32) qs = qs.slice(1); else if (side < -.32) qs = qs.slice(0, 4); return qs } function starLoops(T, heads = true) { let R = P.starR; for (let q of visibleStarQs()) { let rr = Math.sqrt(Math.max(0, R * R - q * q)); drawPath(circlePts(q, rr, 420), C.w, true, 2.8); if (heads) loopArrow(T, q) } } function starLoopHeads(T) { let R = P.starR; for (let q of visibleStarQs()) loopArrow(T, q) } function starDots(Pts) { let R = P.starR; for (let k = 0; k < 96; k += 2) { let a = k * TAU / 96; push(Pts, invView(v(R * Math.cos(a), R * Math.sin(a), 0)), C.w) } }
-    function earthTargetRadius() {
-        const dpr = canvas.width / innerWidth;
-        const scale = (S.earthScale || 1) * (P.rayTargetScale || 1);
-
-        return Math.max(1, P.earthR * scale * S.zoom * S.zm / dpr);
-    }
-    function rayScreenInfo(kind) { let sun = kind === 'sun', inner = sun ? P.sunInner : P.moonInner, outer = sun ? P.sunOuter : P.moonOuter, z = sun ? sz(0) : mz(0), col = sun ? C.s : C.m, ideal = sun ? P.sunAng : P.moonAng, shift = -(day() * TAU + (sun ? 0 : mang())), a = ideal + shift, src = c2w(v(inner * Math.cos(a), inner * Math.sin(a), z)), outerPt = c2w(v(outer * Math.cos(a), outer * Math.sin(a), z)), centre = projectW(c2w(v(0, 0, z))), earthScreen = projectW(v(0, 0, 0)), srcScreen = projectW(src), outerScreen = projectW(outerPt), base = Math.atan2(srcScreen.y - earthScreen.y, srcScreen.x - earthScreen.x); return { sun, src, earthScreen, srcScreen, outerScreen, centre, base, col } } function screenToWorldAtEarthDepth(sx, sy) { let dpr = canvas.width / innerWidth, ez = w2v(v(0, 0, 0)).z; return invView(v((sx - innerWidth / 2) * dpr / (S.zoom * S.zm), (innerHeight / 2 - sy) * dpr / (S.zoom * S.zm), ez)) } function circularMean(a, b) { return Math.atan2(Math.sin(a) + Math.sin(b), Math.cos(a) + Math.cos(b)) } function earthLabelScreen() { let s = rayScreenInfo('sun'), m = rayScreenInfo('moon'), r = earthTargetRadius(), away = circularMean(s.base, m.base) + Math.PI; return { x: s.earthScreen.x + Math.cos(away) * (r + 20), y: s.earthScreen.y + Math.sin(away) * (r + 20), z: s.earthScreen.z } } function bodyLabelScreen(kind) { let info = rayScreenInfo(kind), dx = info.outerScreen.x - info.centre.x, dy = info.outerScreen.y - info.centre.y, l = Math.hypot(dx, dy) || 1; return { x: info.outerScreen.x + dx / l * 48, y: info.outerScreen.y + dy / l * 48, z: info.outerScreen.z } } function starsLabelScreen() { let p = projectW(invView(v(0, P.starR, 0))); return { x: p.x, y: p.y - 22, z: p.z } } function rays(A) { let targetR = earthTargetRadius(), count = 5; for (let kind of ['sun', 'moon']) { let info = rayScreenInfo(kind), spread = (info.sun ? 62 : 84) * Math.PI / 180; for (let j = 0; j < count; j++) { let u = count === 1 ? .5 : j / (count - 1), ang = info.base + (-.5 + u) * spread, tx = info.earthScreen.x + Math.cos(ang) * targetR, ty = info.earthScreen.y + Math.sin(ang) * targetR, dst = screenToWorldAtEarthDepth(tx, ty); line(A, info.src, dst, info.col) } } } function axis(A) { line(A, c2w(v(0, 0, -5.5)), c2w(v(0, 0, 5.5)), C.w) } function earth(A, scale = 1) { let n = 72, r = P.earthR * scale, h = P.earthH * scale; for (let k = 0; k < n; k++) { let a = k * TAU / n, b = (k + 1) * TAU / n, p0 = v(r * Math.cos(a), -h, r * Math.sin(a)), p1 = v(r * Math.cos(b), -h, r * Math.sin(b)), p2 = v(r * Math.cos(a), h, r * Math.sin(a)), p3 = v(r * Math.cos(b), h, r * Math.sin(b)); tri(A, p0, p1, p2, C.w); tri(A, p2, p1, p3, C.w); tri(A, v(0, h, 0), p2, p3, C.w); tri(A, v(0, -h, 0), p1, p0, C.w) } } function drawBatch(mode, A, pt = 3.5) { if (!A.p.length) return; gl.uniform1f(loc.point, pt); gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(A.p), gl.STREAM_DRAW); gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(loc.pos); gl.bindBuffer(gl.ARRAY_BUFFER, colBuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(A.c), gl.STREAM_DRAW); gl.vertexAttribPointer(loc.col, 4, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(loc.col); gl.drawArrays(mode, 0, A.p.length / 3) }
-    function drawScene(earthScale = 1, topEarth = false, zoomMul = 1, white = false) { S.zm = zoomMul;
-        gl.useProgram(prog);
-        gl.uniformMatrix4fv(loc.m, false, rotMat());
-        gl.uniform2f(loc.res, canvas.width, canvas.height);
-        gl.uniform1f(loc.zoom, S.zoom * zoomMul);
-        gl.clearColor(white ? 1 : 0, white ? 1 : 0, white ? 1 : 0, 1);
-        gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        if (white) return;
-        let sphere = { p: [], c: [] }, ring = { p: [], c: [] }, L1 = { p: [], c: [] }, T1 = { p: [], c: [] };
-        sphereOcc(sphere);
-        drawBatch(gl.TRIANGLES, sphere);
-        starLoops(T1, false);
-        drawPath([c2w(v(0, 0, -5.5)), c2w(v(0, 0, 5.5))], C.w, false, 3.8);
-        ringOcc(ring, sz(0), P.sunOuter, P.sunInner);
-        ringOcc(ring, mz(0), P.moonOuter, P.moonInner);
-        drawBatch(gl.TRIANGLES, ring);
-        ringLines(sz(0), P.sunOuter, P.sunInner, C.s);
-        ringLines(mz(0), P.moonOuter, P.moonInner, C.m);
-        arrow(T1, sz(0), P.sunOuter, C.s);
-        arrow(T1, mz(0), P.moonOuter, C.m);
-        drawBatch(gl.TRIANGLES, T1);
-        drawBatch(gl.LINES, L1);
-        gl.clear(gl.DEPTH_BUFFER_BIT);
-        let ringDepth = { p: [], c: [] };
-        ringOcc(ringDepth, sz(0), P.sunOuter, P.sunInner);
-        ringOcc(ringDepth, mz(0), P.moonOuter, P.moonInner);
-        gl.colorMask(false, false, false, false);
-        drawBatch(gl.TRIANGLES, ringDepth);
-        gl.colorMask(true, true, true, true);
-        let L2 = { p: [], c: [] }, T2 = { p: [], c: [] }, Pts = { p: [], c: [] };
-        rays(L2);
-        starLoopHeads(T2);
-        drawBatch(gl.TRIANGLES, T2);
-        drawBatch(gl.LINES, L2);
-        starDots(Pts);
-        drawBatch(gl.POINTS, Pts, 3.8);
-        let E = { p: [], c: [] };
-        earth(E, earthScale);
-        if (topEarth) gl.clear(gl.DEPTH_BUFFER_BIT);
-        drawBatch(gl.TRIANGLES, E)
-    }
-    
-    function ease(t) { t = Math.max(0, Math.min(1, t)); return t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2 }
-    function progress(now) { return Math.max(0, Math.min(1, (now - PAGE.t0) / PAGE.duration)) }
-    function setLabel(el, p) { el.style.left = p.x + 'px'; el.style.top = p.y + 'px' }
-    function updateLabels() { let d = { sun: bodyLabelScreen('sun'), moon: bodyLabelScreen('moon'), earth: earthLabelScreen(), stars: starsLabelScreen(), N: projectW(c2w(v(0, 0, 5.65))), S: projectW(c2w(v(0, 0, -5.65))) }; for (let k in d) setLabel(labels[k], d[k]); for (let k in labels) labels[k].classList.toggle('hidden', PAGE.mode !== 'home') }
-    function wrap01(x) {
-        return ((x % 1) + 1) % 1;
-    }
-
-    function heavensMood() {
-        let sunDaily = wrap01(day());
-        let moonDaily = wrap01(day() + mang() / TAU);
-        let season = wrap01(yang() / TAU);
-        let phase = wrap01(mang() / TAU);
-
-        let agreement = Math.cos(TAU * (sunDaily - moonDaily));
-        let warmth = Math.sin(TAU * season);
-        let fullness = Math.cos(TAU * (phase - .5));
-        let threshold = Math.cos(TAU * (sunDaily - .25));
-
-        let omen =
-            agreement * 1.25 +
-            warmth * 1.1 +
-            fullness * .85 +
-            threshold * .65;
-
-        let mood =
-            omen > 2.25 ? 'the heavens are radiant' :
-            omen > 1.25 ? 'the heavens are happy' :
-            omen > .35 ? 'the heavens are pleased' :
-            omen > -.35 ? 'the heavens are inscrutable' :
-            omen > -1.25 ? 'the heavens are wistful' :
-            omen > -2.25 ? 'the heavens are sad' :
-            'the heavens are inconsolable';
-
-        return mood;
-    }
-
-    function readouts() {
-        let h = heavensMood();
-
-        $('datev').textContent = new Date(S.ms).toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric'
-        });
-
-        $('speedv').textContent = S.speed.toFixed(0) + '×';
-        $('heavensReadout').textContent = h;
-    }
-    function frame() {
-        let now = performance.now(), dt = (now - S.last) / 1000;
-        S.last = now;
-        if (!S.interactive) {
-            let k = 1 - Math.exp(-dt * 5.5);
-            S.yaw += (S.targetYaw - S.yaw) * k;
-            S.pitch += (S.targetPitch - S.pitch) * k
-        }
-        if (S.play) {
-            S.ms += dt * 1000 * S.speed;
-            if (now - S.readoutLast > 500 && document.activeElement !== dateTime) dateTime.value = toInput(S.ms);
-        }
-        if (now - S.readoutLast > 500) {
-            readouts();
-            S.readoutLast = now;
-        }
-        if (PAGE.mode === 'home') {
-            drawScene(1, S.topEarth, 1, false);
-            updateLabels();
-        } else if (PAGE.mode === 'in') {
-            let p = progress(now), e = ease(p), filled = p > .56;
-            drawScene(1 + e * 170, true, 1 + e * 8, filled);
-            updateLabels();
-            if (p > .58) {
-                pageOverlay.classList.add('show');
-            }
-            if (p >= .82) {
-                PAGE.mode = 'page';
-                pageOverlay.classList.add('show');
-            }
-        } else if (PAGE.mode === 'page') { 
-            drawScene(1, true, 8, true);
-        } else if (PAGE.mode === 'out') {
-            let p = progress(now), e = ease(1 - p);
-            drawScene(1 + e * 170, true, 1 + e * 8, p < .16);
-            if (p >= 1) {
-                S.topEarth = false;
-                PAGE.mode = 'home';
-                siteOverlay.classList.remove('faded');
-                modeToggle.style.opacity = 1;
-                pageOverlay.classList.remove('show')
-            }
-        }
-        requestAnimationFrame(frame)
-    }
-
-    let initialData = currentPageData();
-
-    if (initialData) {
-        PAGE.mode = 'page';
-        S.topEarth = true;
-        setPage(initialData);
-        pageOverlay.classList.add('show');
-        siteOverlay.classList.add('faded');
-        modeToggle.style.opacity = 0;
-    }
-
-    requestAnimationFrame(frame);
+  requestAnimationFrame(renderFrame);
 })();

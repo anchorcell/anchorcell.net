@@ -1,1 +1,25 @@
-<ul class="releaseList">{% for release in site.data.music %}<li><div class="releaseMeta">{{ release.type }} · {{ release.year }}</div><h2>{{ release.title }}</h2><p>{{ release.description }}</p></li>{% endfor %}</ul>
+{% assign releases = site.data.music | where_exp: "release", "release.title" %}
+{% if releases.size > 0 %}
+<ul class="releaseList">
+{% for release in releases %}
+<li>
+  {% if release.type or release.year %}
+  <div class="releaseMeta">{{ release.type }}{% if release.type and release.year %} · {% endif %}{{ release.year }}</div>
+  {% endif %}
+  <h2>{{ release.title }}</h2>
+  {% if release.description %}
+  <p>{{ release.description }}</p>
+  {% endif %}
+  {% if release.links %}
+  <p class="releaseLinks">
+    {% for link in release.links %}
+    <a href="{{ link[1] }}">{{ link[0] }}</a>{% unless forloop.last %} · {% endunless %}
+    {% endfor %}
+  </p>
+  {% endif %}
+</li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="emptyState">no releases yet :) check out <a href="{{ '/videos/' | relative_url }}">the videos page</a> for some of our music.</p>
+{% endif %}

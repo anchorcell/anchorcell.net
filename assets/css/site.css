@@ -16,8 +16,7 @@ canvas {
 }
 
 /* Shared title styling, used by WebGL overlay and static fallback */
-.bandTitle,
-.siteOverlay .bandTitle {
+.bandTitle {
     display: inline-block;
     font-family: "Computer Modern Serif", serif;
     font-size: 84px;
@@ -67,9 +66,16 @@ canvas {
     opacity: 1;
 }
 
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 4px;
+}
+
+
 @media (max-width: 460px), (max-height: 280px) {
-    .bandTitle,
-    .siteOverlay .bandTitle {
+    .bandTitle {
         font-size: clamp(30px, min(18vw, 26vh), 84px);
     }
 
@@ -103,18 +109,38 @@ canvas {
 }
 
 /* WebGL controls */
-.modeToggle {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 30;
-    margin: 0;
+.modeToggle,
+.ui button {
+    appearance: none;
     background: rgba(0, 0, 0, .72);
     font: inherit;
     color: #fff;
     border: 1px solid #444;
     border-radius: 999px;
     padding: 6px 10px;
+    cursor: pointer;
+}
+
+.modeToggle {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 30;
+    margin: 0;
+}
+
+.ui button {
+    margin: 0;
+}
+
+.modeToggle:hover,
+.modeToggle:focus-visible,
+.ui button:hover,
+.ui button:focus-visible {
+    background: #fff;
+    color: #000;
+    border-color: #fff;
+    opacity: 1;
 }
 
 .ui {
@@ -182,6 +208,8 @@ input {
     left: clamp(22px, 7vw, 110px);
     top: clamp(26px, 10vh, 110px);
     width: min(760px, calc(100vw - (2 * clamp(22px, 7vw, 110px))));
+    padding-top: 72px;
+    box-sizing: border-box;
 }
 
 .pageTitle {
@@ -313,6 +341,9 @@ input {
 }
 
 .pageBack {
+    position: absolute;
+    top: 0;
+    left: 0;
     display: inline-block;
     font: 14px ui-monospace, monospace;
     color: #000;
@@ -320,7 +351,7 @@ input {
     border: 1px solid #000;
     border-radius: 999px;
     padding: 7px 12px;
-    margin: 0 0 42px;
+    margin: 0;
     text-decoration: none;
     cursor: pointer;
 }
@@ -332,17 +363,14 @@ input {
     opacity: 1;
 }
 
-.pageOverlay a:not(.pageBack),
-.staticPageOverlay a:not(.pageBack) {
+.pageOverlay a:not(.pageBack) {
     color: #000;
     text-decoration: underline;
     text-underline-offset: .16em;
 }
 
 .pageOverlay a:not(.pageBack):hover,
-.pageOverlay a:not(.pageBack):focus-visible,
-.staticPageOverlay a:not(.pageBack):hover,
-.staticPageOverlay a:not(.pageBack):focus-visible {
+.pageOverlay a:not(.pageBack):focus-visible {
     color: #000;
     opacity: .72;
 }
@@ -388,9 +416,7 @@ input {
 
 
 .siteOverlay .bandTitle,
-.staticSiteOverlay .bandTitle,
-.siteOverlay nav a,
-.staticSiteOverlay nav a {
+.siteOverlay nav a {
     text-shadow:
         0 1px 2px rgba(0, 0, 0, .95),
         0 3px 8px rgba(0, 0, 0, .9),
@@ -398,8 +424,7 @@ input {
         0 16px 42px rgba(0, 0, 0, .7);
 }
 
-.pageOverlay,
-.staticPageOverlay {
+.pageOverlay {
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
