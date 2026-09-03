@@ -378,6 +378,36 @@
       returnFocusElement: null,
     };
 
+  const navigationState = {
+    sequence: 0,
+    controller: null,
+  };
+
+  function beginNavigation() {
+    navigationState.controller?.abort();
+    const request = {
+      id: ++navigationState.sequence,
+      controller: new AbortController(),
+    };
+    navigationState.controller = request.controller;
+    return request;
+  }
+
+  function isCurrentNavigation(request) {
+    return navigationState.sequence === request.id &&
+      navigationState.controller === request.controller;
+  }
+
+  function finishNavigation(request) {
+    if (isCurrentNavigation(request)) navigationState.controller = null;
+  }
+
+  function cancelNavigation() {
+    navigationState.sequence++;
+    navigationState.controller?.abort();
+    navigationState.controller = null;
+  }
+
   function setPageOverlayVisible(visible, { focus = true } = {}) {
     const wasVisible = pageOverlay.classList.contains("show");
     pageOverlay.classList.toggle("show", visible);
@@ -422,6 +452,17 @@
     if (target instanceof HTMLElement && document.contains(target)) {
       target.focus({ preventScroll: true });
     }
+  }
+
+  function returnHome() {
+    sceneState.earthOnTop = false;
+    pageTransition.phase = "home";
+    pageTransition.pageData = null;
+    setHomeDocumentTitle();
+    setSiteOverlayVisible(true);
+    setModeToggleVisible(true);
+    setPageOverlayVisible(false);
+    restorePageFocus();
   }
 
   const focusableSelector = [
@@ -469,8 +510,8 @@
     sceneState.targetPitch = sceneState.pitch;
   };
 
-  async function fetchRenderedPage(url) {
-    const res = await fetch(url);
+  async function fetchRenderedPage(url, signal) {
+    const res = await fetch(url, { signal });
 
     if (!res.ok) {
       throw new Error("Could not load " + url);
@@ -599,45 +640,77 @@
 
     const route = routeTable[sectionKey];
     if (!route) return;
+    if (sectionKey !== "news" && !sectionHtmlByKey[sectionKey]) return;
+
+    if (options.force) cancelNavigation();
+    const request = beginNavigation();
+
     if (!options.noHistory) {
       const activeElement = document.activeElement;
       pageTransition.returnFocusElement = siteOverlay.contains(activeElement)
         ? activeElement
         : null;
+      history.pushState({ section: sectionKey }, "", route);
     }
+
+    pageTransition.pageData = null;
+    pageTransition.phase = "loading";
+    setSiteOverlayVisible(false);
+    setModeToggleVisible(false);
 
     let pageData;
 
     if (sectionKey === "news") {
       try {
-        pageData = await fetchRenderedPage(route);
-      } catch {
+        pageData = await fetchRenderedPage(
+          route,
+          request.controller.signal,
+        );
+      } catch (error) {
+        if (!isCurrentNavigation(request)) return;
+        finishNavigation(request);
+
+        if (error?.name === "AbortError") return;
         if (!options.noHistory) {
           location.href = route;
+        } else {
+          returnHome();
         }
         return;
       }
     } else {
-      if (!sectionHtmlByKey[sectionKey]) return;
       pageData = pageDataForSection(sectionKey);
     }
 
-    if (!options.noHistory) {
-      history.pushState({ section: sectionKey }, "", route);
+    if (!isCurrentNavigation(request)) return;
+    if (
+      !options.noHistory &&
+      normalizePathname(location.pathname) !== normalizePathname(route)
+    ) {
+      cancelNavigation();
+      return;
     }
 
+    finishNavigation(request);
     sceneState.earthOnTop = true;
     pageTransition.phase = "entering";
     pageTransition.startedAtMs = performance.now();
-
     setPage(pageData);
-
-    setSiteOverlayVisible(false);
-    setModeToggleVisible(false);
   }
 
   function closePageOverlay(options = {}) {
-    if (pageTransition.phase !== "open") return;
+    const phase = pageTransition.phase;
+
+    if (phase === "loading" || phase === "entering") {
+      cancelNavigation();
+      if (!options.noHistory) {
+        history.pushState({ section: "home" }, "", homeRoute);
+      }
+      returnHome();
+      return;
+    }
+
+    if (phase !== "open") return;
 
     const backUrl =
       (pageTransition.pageData && pageTransition.pageData.backUrl) ||
@@ -661,21 +734,30 @@
     setPageOverlayVisible(false);
   }
 
-  siteOverlay.querySelectorAll("nav a").forEach((a) =>
-    a.onclick = (e) => {
-      const section = sectionKeyForPath(a.href);
-      if (section) {
-        e.preventDefault();
-        openSectionPage(section);
+  siteOverlay.querySelectorAll("nav a").forEach((link) =>
+    link.onclick = (event) => {
+      const sectionKey = sectionKeyForPath(link.href);
+      const isPrimaryClick = event.button === 0 &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        pageTransition.phase === "home";
+
+      if (sectionKey && isPrimaryClick) {
+        event.preventDefault();
+        openSectionPage(sectionKey);
       }
     }
   );
   pageBack.onclick = () => closePageOverlay();
   pageOverlay.addEventListener("keydown", trapPageTab);
   addEventListener("popstate", () => {
+    cancelNavigation();
     const pageData = pageDataForLocation();
 
     if (pageData) {
+      sceneState.earthOnTop = true;
       pageTransition.phase = "open";
       setPage(pageData);
       setPageOverlayVisible(true);
@@ -683,6 +765,8 @@
       setModeToggleVisible(false);
     } else if (pageTransition.phase === "open") {
       closePageOverlay({ noHistory: true });
+    } else if (pageTransition.phase !== "home") {
+      returnHome();
     }
   });
   function fitViewportZoom() {
@@ -1791,7 +1875,7 @@
       sceneState.lastReadoutAt = nowMs;
     }
 
-    if (pageTransition.phase === "home") {
+    if (pageTransition.phase === "home" || pageTransition.phase === "loading") {
       drawScene({ earthOnTop: sceneState.earthOnTop });
       updateLabelPositions();
     } else if (pageTransition.phase === "entering") {
@@ -1830,12 +1914,7 @@
         whiteBackground: transitionAmount < .16,
       });
       if (transitionAmount >= 1) {
-        sceneState.earthOnTop = false;
-        pageTransition.phase = "home";
-        setSiteOverlayVisible(true);
-        setModeToggleVisible(true);
-        setPageOverlayVisible(false);
-        restorePageFocus();
+        returnHome();
       }
     }
     requestAnimationFrame(renderFrame);
