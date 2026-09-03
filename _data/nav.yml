@@ -1,8 +1,12 @@
-- title: news
+- key: news
+  title: news
   url: /news/
-- title: shows
+- key: shows
+  title: shows
   url: /shows/
-- title: music
+- key: music
+  title: music
   url: /music/
-- title: videos
+- key: videos
+  title: videos
   url: /videos/

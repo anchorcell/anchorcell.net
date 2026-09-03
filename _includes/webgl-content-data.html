@@ -1,16 +1,16 @@
-{% capture news_html %}{% include news-index.html %}{% endcapture %}
-{% capture shows_html %}{% include shows-list.html %}{% endcapture %}
-{% capture music_html %}{% include music-list.html %}{% endcapture %}
-{% capture videos_html %}{% include videos-list.html %}{% endcapture %}
 <script>
-window.ANCHORCELL_ROUTES = {
-  home: {{ '/' | relative_url | jsonify }}{% for item in site.data.nav %},
-  {{ item.title | jsonify }}: {{ item.url | relative_url | jsonify }}{% endfor %}
-};
-window.ANCHORCELL_CONTENT = {
-  news: {{ news_html | normalize_whitespace | jsonify | replace: '</', '<\/' }},
-  shows: {{ shows_html | normalize_whitespace | jsonify | replace: '</', '<\/' }},
-  music: {{ music_html | normalize_whitespace | jsonify | replace: '</', '<\/' }},
-  videos: {{ videos_html | normalize_whitespace | jsonify | replace: '</', '<\/' }}
+window.ANCHORCELL_NAVIGATION = {
+  home: {{ '/' | relative_url | jsonify }},
+  sections: [
+    {% for item in site.data.nav %}
+      {% capture section_html %}{% case item.key %}{% when 'news' %}{% include news-index.html %}{% when 'shows' %}{% include shows-list.html %}{% when 'music' %}{% include music-list.html %}{% when 'videos' %}{% include videos-list.html %}{% endcase %}{% endcapture %}
+    {
+      key: {{ item.key | jsonify }},
+      label: {{ item.title | jsonify }},
+      url: {{ item.url | relative_url | jsonify }},
+      html: {{ section_html | normalize_whitespace | jsonify | replace: '</', '<\/' }}
+    }{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ]
 };
 </script>

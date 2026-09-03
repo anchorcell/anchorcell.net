@@ -47,9 +47,6 @@
     return;
   }
 
-  document.documentElement.classList.remove("no-webgl");
-  document.documentElement.classList.add("webgl-ready");
-
   const FULL_TURN_RADIANS = Math.PI * 2,
     MILLISECONDS_PER_DAY = 86400000,
     DAYS_PER_TROPICAL_YEAR = 365.2422,
@@ -103,6 +100,10 @@
     earthOnTop: false,
     zoomMultiplier: 1,
   };
+
+  let frameRequestId = 0;
+  let renderingEnabled = true;
+  let contextLost = false;
   const getElement = (id) => document.getElementById(id),
     dateTimeInput = getElement("dateTime"),
     speedInput = getElement("speed"),
@@ -122,12 +123,30 @@
       N: getElement("nLabel"),
       S: getElement("sLabel"),
     };
+
+  function exposeStaticFallback() {
+    renderingEnabled = false;
+    if (frameRequestId) cancelAnimationFrame(frameRequestId);
+    document.documentElement.classList.remove("webgl-ready");
+    document.documentElement.classList.add("no-webgl");
+    globalThis.__ANCHORCELL_WEBGL_STARTED__ = false;
+  }
+
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    contextLost = true;
+    exposeStaticFallback();
+  });
+  canvas.addEventListener("webglcontextrestored", () => {
+    if (contextLost) location.reload();
+  });
   const sceneVertexShader =
     `attribute vec3 aPos;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uPoint;varying vec4 vCol;void main(){vec4 q=uM*vec4(aPos,1.);vec2 clip=vec2(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5));gl_Position=vec4(clip,-q.z/96.,1.);gl_PointSize=uPoint;vCol=aCol;}`;
   const fragmentShader =
     `precision mediump float;varying vec4 vCol;void main(){gl_FragColor=vCol;}`;
   function createShader(shaderType, source) {
     const shader = gl.createShader(shaderType);
+    if (!shader) throw Error("Could not create WebGL shader");
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
@@ -135,18 +154,54 @@
     }
     return shader;
   }
-  const sceneProgram = gl.createProgram();
-  gl.attachShader(
-    sceneProgram,
-    createShader(gl.VERTEX_SHADER, sceneVertexShader),
-  );
-  gl.attachShader(
-    sceneProgram,
-    createShader(gl.FRAGMENT_SHADER, fragmentShader),
-  );
-  gl.linkProgram(sceneProgram);
-  gl.useProgram(sceneProgram);
-  const sceneLocations = {
+
+  function createProgram(vertexSource, fragmentSource) {
+    let vertexShader = null;
+    let fragmentShader = null;
+    let program = null;
+    let linked = false;
+
+    try {
+      vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+      fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+      program = gl.createProgram();
+
+      if (!program) throw Error("Could not create WebGL program");
+
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      linked = gl.getProgramParameter(program, gl.LINK_STATUS);
+
+      if (!linked) {
+        throw Error(
+          gl.getProgramInfoLog(program) || "Could not link WebGL program",
+        );
+      }
+
+      return program;
+    } finally {
+      if (vertexShader) gl.deleteShader(vertexShader);
+      if (fragmentShader) gl.deleteShader(fragmentShader);
+      if (!linked && program) gl.deleteProgram(program);
+    }
+  }
+
+  let sceneProgram;
+  let pathProgram;
+  let sceneLocations;
+  let pathLocations;
+  let positionBuffer;
+  let colorBuffer;
+  let previousPathBuffer;
+  let currentPathBuffer;
+  let nextPathBuffer;
+  let pathSideBuffer;
+  let pathColorBuffer;
+
+  try {
+    sceneProgram = createProgram(sceneVertexShader, fragmentShader);
+    sceneLocations = {
       position: gl.getAttribLocation(sceneProgram, "aPos"),
       color: gl.getAttribLocation(sceneProgram, "aCol"),
       modelMatrix: gl.getUniformLocation(sceneProgram, "uM"),
@@ -154,21 +209,12 @@
       zoom: gl.getUniformLocation(sceneProgram, "uZoom"),
       pointSize: gl.getUniformLocation(sceneProgram, "uPoint"),
     },
-    positionBuffer = gl.createBuffer(),
-    colorBuffer = gl.createBuffer();
-  const pathVertexShader =
-    `attribute vec3 aPrev;attribute vec3 aCurr;attribute vec3 aNext;attribute float aSide;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uThickness;varying vec4 vCol;vec4 project(vec3 p){vec4 q=uM*vec4(p,1.);return vec4(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5),-q.z/96.,1.);}void main(){vec4 pp=project(aPrev),cc=project(aCurr),nn=project(aNext);float aspect=uRes.x/uRes.y;vec2 p=pp.xy*vec2(aspect,1.),c=cc.xy*vec2(aspect,1.),n=nn.xy*vec2(aspect,1.);vec2 d0=normalize(c-p),d1=normalize(n-c);vec2 tangent=normalize(d0+d1);if(length(tangent)<.01)tangent=d1;vec2 miter=vec2(-tangent.y,tangent.x);vec2 normal=vec2(-d1.y,d1.x);float denom=max(.25,abs(dot(miter,normal)));float len=(uThickness/uRes.y)/denom;vec2 off=miter*aSide*len;off.x/=aspect;gl_Position=cc;gl_Position.xy+=off;vCol=aCol;}`;
-  const pathProgram = gl.createProgram();
-  gl.attachShader(
-    pathProgram,
-    createShader(gl.VERTEX_SHADER, pathVertexShader),
-  );
-  gl.attachShader(
-    pathProgram,
-    createShader(gl.FRAGMENT_SHADER, fragmentShader),
-  );
-  gl.linkProgram(pathProgram);
-  const pathLocations = {
+      positionBuffer = gl.createBuffer(),
+      colorBuffer = gl.createBuffer();
+    const pathVertexShader =
+      `attribute vec3 aPrev;attribute vec3 aCurr;attribute vec3 aNext;attribute float aSide;attribute vec4 aCol;uniform mat4 uM;uniform vec2 uRes;uniform float uZoom;uniform float uThickness;varying vec4 vCol;vec4 project(vec3 p){vec4 q=uM*vec4(p,1.);return vec4(q.x*uZoom/(uRes.x*.5),q.y*uZoom/(uRes.y*.5),-q.z/96.,1.);}void main(){vec4 pp=project(aPrev),cc=project(aCurr),nn=project(aNext);float aspect=uRes.x/uRes.y;vec2 p=pp.xy*vec2(aspect,1.),c=cc.xy*vec2(aspect,1.),n=nn.xy*vec2(aspect,1.);vec2 d0=normalize(c-p),d1=normalize(n-c);vec2 tangent=normalize(d0+d1);if(length(tangent)<.01)tangent=d1;vec2 miter=vec2(-tangent.y,tangent.x);vec2 normal=vec2(-d1.y,d1.x);float denom=max(.25,abs(dot(miter,normal)));float len=(uThickness/uRes.y)/denom;vec2 off=miter*aSide*len;off.x/=aspect;gl_Position=cc;gl_Position.xy+=off;vCol=aCol;}`;
+    pathProgram = createProgram(pathVertexShader, fragmentShader);
+    pathLocations = {
       previous: gl.getAttribLocation(pathProgram, "aPrev"),
       current: gl.getAttribLocation(pathProgram, "aCurr"),
       next: gl.getAttribLocation(pathProgram, "aNext"),
@@ -179,19 +225,24 @@
       zoom: gl.getUniformLocation(pathProgram, "uZoom"),
       thickness: gl.getUniformLocation(pathProgram, "uThickness"),
     },
-    previousPathBuffer = gl.createBuffer(),
-    currentPathBuffer = gl.createBuffer(),
-    nextPathBuffer = gl.createBuffer(),
-    pathSideBuffer = gl.createBuffer(),
-    pathColorBuffer = gl.createBuffer();
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  try {
-    gl.lineWidth(3);
-  } catch {
-    // Some contexts ignore line width changes.
+      previousPathBuffer = gl.createBuffer(),
+      currentPathBuffer = gl.createBuffer(),
+      nextPathBuffer = gl.createBuffer(),
+      pathSideBuffer = gl.createBuffer(),
+      pathColorBuffer = gl.createBuffer();
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    try {
+      gl.lineWidth(3);
+    } catch {
+      // Some contexts ignore line width changes.
+    }
+  } catch (error) {
+    console.error("WebGL initialization failed:", error);
+    exposeStaticFallback();
+    return;
   }
   function vec3(x = 0, y = 0, z = 0) {
     return { x, y, z };
@@ -363,13 +414,14 @@
   });
   speedInput.oninput = () => sceneState.timeScale = +speedInput.value;
 
-  const sectionHtmlByKey = globalThis.ANCHORCELL_CONTENT || {},
+  const navigation = globalThis.ANCHORCELL_NAVIGATION || {},
     initialPageData = globalThis.ANCHORCELL_PAGE || {},
-    routeTable = globalThis.ANCHORCELL_ROUTES || {},
-    homeRoute = routeTable.home || "/",
-    sectionRoutes = Object.entries(routeTable).filter(([key]) =>
-      key !== "home"
+    sectionManifest = navigation.sections || [],
+    routeTable = Object.fromEntries(
+      sectionManifest.map(({ key, url }) => [key, url]),
     ),
+    homeRoute = navigation.home || "/",
+    sectionRoutes = sectionManifest.map(({ key, url }) => [key, url]),
     pageTransition = {
       phase: "home",
       pageData: null,
@@ -429,8 +481,10 @@
 
   function setModeToggleVisible(visible) {
     modeToggle.style.opacity = visible ? "1" : "0";
+    modeToggle.style.pointerEvents = visible ? "auto" : "none";
     modeToggle.setAttribute("aria-hidden", String(!visible));
     modeToggle.tabIndex = visible ? 0 : -1;
+    modeToggle.inert = !visible;
   }
 
   function setInteractionPanelVisible(visible) {
@@ -562,14 +616,17 @@
   }
 
   function pageDataForSection(sectionKey) {
+    const section = sectionManifest.find(({ key }) => key === sectionKey);
+    if (!section) return null;
+
     return {
       type: "section",
-      key: sectionKey,
-      title: sectionKey,
-      kicker: "anchorcell / " + sectionKey,
+      key: section.key,
+      title: section.label,
+      kicker: "anchorcell / " + section.label,
       backUrl: homeRoute,
       backLabel: "go back",
-      body: sectionHtmlByKey[sectionKey] || "<p>More soon.</p>",
+      body: section.html || "<p>More soon.</p>",
     };
   }
 
@@ -640,7 +697,10 @@
 
     const route = routeTable[sectionKey];
     if (!route) return;
-    if (sectionKey !== "news" && !sectionHtmlByKey[sectionKey]) return;
+    if (
+      sectionKey !== "news" &&
+      !sectionManifest.some(({ key }) => key === sectionKey)
+    ) return;
 
     if (options.force) cancelNavigation();
     const request = beginNavigation();
@@ -1917,7 +1977,7 @@
         returnHome();
       }
     }
-    requestAnimationFrame(renderFrame);
+    if (renderingEnabled) frameRequestId = requestAnimationFrame(renderFrame);
   }
 
   const initialPage = pageDataForLocation();
@@ -1931,5 +1991,9 @@
     setModeToggleVisible(false);
   }
 
-  requestAnimationFrame(renderFrame);
+  if (renderingEnabled) {
+    document.documentElement.classList.remove("no-webgl");
+    document.documentElement.classList.add("webgl-ready");
+    frameRequestId = requestAnimationFrame(renderFrame);
+  }
 })();
